@@ -1,36 +1,187 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# 🌿 Kridha
 
-## Getting Started
+> B2B + B2C self-pickup marketplace connecting kirana owners with
+> micro-suppliers in Tier-2/3 India — starting with Uttar Pradesh.
 
-First, run the development server:
+[![Live](https://img.shields.io/badge/status-building-yellow)](https://github.com/DevWithAbhishek/kridha)
+[![Next.js](https://img.shields.io/badge/Next.js-14-black)](https://nextjs.org)
+[![TypeScript](https://img.shields.io/badge/TypeScript-strict-blue)](https://typescriptlang.org)
+[![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
+---
+
+## The Problem
+
+Udaan and B2B platforms require minimum orders of 50 kg+ to make delivery
+economics work. A kirana owner needing 8 kg of mustard oil from a local mill
+3 km away has no platform to do it through — he calls, negotiates, and pays
+cash on pickup with zero protection.
+
+**Kridha removes the minimum order constraint** by eliminating delivery
+entirely. Buyers self-pickup. Suppliers list what they have. The platform
+handles discovery, payment protection, and trust — nothing else.
+
+---
+
+## Who It's For
+
+| Role       | Who                                                        | What they do                                                           |
+| ---------- | ---------------------------------------------------------- | ---------------------------------------------------------------------- |
+| **Buyer**  | Kirana owners, small retailers                             | Browse nearby suppliers, place orders, pay advance, self-pickup        |
+| **Seller** | Farmers, oil mills, local manufacturers, small wholesalers | List products, set price tiers, manage pickup windows, receive payouts |
+
+---
+
+## How It Works
+
+### 🛒 Buyer Flow
+
+A kirana owner in Lucknow opens Kridha. He sees suppliers within 10 km
+selling Mustard Oil, Wheat, and Dairy — filtered by city and radius. He
+narrows results by price range, deal active, distance, brand, and category,
+with sorting by price or distance.
+
+He selects Mustard Oil (10 kg at bulk tier price), adds Wheat Flour from a
+second supplier to cart, and checks out. Kridha calculates the advance per
+seller — `MIN(₹500, MAX(₹100, 5% of order total))` — and collects the
+combined advance in one Razorpay flow.
+
+Both orders confirm atomically. He receives a delivery OTP and pickup window
+for each supplier independently.
+
+At the supplier's location he inspects the goods. Seller requests full
+payment via Kridha. Buyer pays. Buyer shares OTP. Order is marked
+**COMPLETED**. Seller payout is queued for the 8 PM batch.
+
+**Acceptance criteria:**
+
+- Only suppliers within the configured radius are visible
+- Order creation is atomic — stock decrements inside a single
+  `prisma.$transaction()` with `SELECT FOR UPDATE`
+- Buyer cannot order more than `product.available`
+- OTP is generated on CONFIRMED, delivered via in-app notification
+- Advance is captured before confirmation
+- OTP verification marks order COMPLETED
+- OTP is set to `null` immediately after use — never stored long-term
+
+---
+
+### 🏪 Seller Flow
+
+A mustard oil mill owner in Kanpur onboards Kridha. He creates his store
+(name + address combination is unique on the platform) and sets pickup
+windows — morning 6–9 AM, evening 4–7 PM, Monday to Saturday.
+
+He lists Mustard Oil with variable units (sold in KG, minimum 5 KG,
+increment 5 KG), price tiers (₹95/kg for 5–20 kg, ₹88/kg for 20 kg+),
+and marks it unbranded. He adds a deal — 10% off for 72 hours. After the
+deal expires, pricing reverts to the original tier automatically via cron.
+
+**Acceptance criteria:**
+
+- Products visible to buyers in the same city within 30 seconds of listing
+- Stock updates propagate immediately on `PATCH /products/:id`
+- Deal expiry handled by Vercel Cron — price reverts after `dealExpiresAt`
+- Store name + address enforced unique at DB level
+
+---
+
+### 📦 Order Status — Both Roles
+
+Every status transition is recorded in `OrderStatusHistory` with a timestamp.
+An in-app notification fires on every transition for both buyer and seller.
+Either party can cancel subject to the refund tier rules.
+
+````
+
+**Refund tiers on cancellation:**
+
+| When | Buyer refund | Seller gets |
+|------|-------------|-------------|
+| Before advance paid | No charge | — |
+| 12h+ before pickup | 100% | 0% |
+| 2–12h before pickup | 50% | 50% |
+| <2h or on inspection | 0% | 100% |
+| Seller cancels | 100% | 0% + reliabilityScore −15 |
+
+---
+
+## System Invariants
+
+Correctness guarantees enforced at both DB and application layer.
+Violating any of these is a bug, not a missing feature.
+
+| # | Invariant | Enforcement |
+|---|-----------|-------------|
+| INV-01 | `product.available` never goes negative | DB `CHECK (available >= 0)` + `SELECT FOR UPDATE` in `prisma.$transaction()` |
+| INV-02 | COMPLETED or CANCELLED order status cannot change | State machine validates every transition before writing. Terminal states have no outgoing edges. |
+| INV-03 | Payment webhook processed exactly once | `WebhookLog.razorpayPaymentId @unique` — duplicate webhook returns 200 without reprocessing |
+| INV-04 | BUYER cannot access seller-only routes | `authorize('SELLER')` middleware on all seller routes. Returns 403 FORBIDDEN. |
+| INV-05 | User can only see their own orders | `orderRepo` checks ownership before returning data. Admins exempt. |
+| INV-06 | Delivery OTP cleared after verification | `deliveryOtp` set to `null` on COMPLETED. Never persisted beyond use. |
+| INV-07 | Phone number is the unique user identifier | `phone @unique` on User. Duplicate returns 409 PHONE_EXISTS. |
+| INV-08 | Seller store name + address must be unique | `@@unique([storeName, storeAddress])` enforced at DB level |
+| INV-09 | Deal price reverts after expiry | Vercel Cron nullifies `dealDiscountPercent` after `dealExpiresAt`. Buyers see original PriceTier. |
+
+---
+
+## Tech Stack
+
+| Layer | Technology | Why |
+|-------|-----------|-----|
+| Framework | Next.js 14 (App Router) | Single deployment — frontend + API routes + cron |
+| Language | TypeScript strict | Catch schema/type mismatches at compile time |
+| Database | PostgreSQL 16 via Neon | PostGIS for radius queries, free tier for zero-cost deploy |
+| ORM | Prisma | Type-safe queries, migration history, `$transaction()` |
+| Cache | Upstash Redis | HTTP-based, serverless-compatible, sliding window rate limiting |
+| Auth | Truecaller SDK + PIN (Argon2)| Hindi-first UX — one-tap for 90% of users |
+| Payments | Razorpay | Advance + payment links + webhook idempotency |
+| Images | Cloudinary | Signed uploads, auto-compression, blurHash placeholders |
+| i18n | next-intl | Hindi-first, English fallback |
+| Validation | Zod | Schema-first — contract drives implementation |
+| Logging | Pino + Sentry | Structured JSON logs, error tracking |
+| Deploy | Vercel (hobby) | Zero cost, cron support, preview URLs |
+
+**Total infrastructure cost: ₹0/month**
+
+---
+
+## Local Setup
 ```bash
+# 1. Clone
+git clone https://github.com/DevWithAbhishek/kridha.git
+cd kridha
+
+# 2. Install
+npm install
+
+# 3. Environment — copy and fill in values
+cp .env.example .env
+
+# 4. Start local DB and Redis
+docker-compose up -d
+
+# 5. Run migrations and seed Lucknow data
+npx prisma migrate dev
+npx prisma db seed
+
+# 6. Start dev server
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
-```
+````
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Open [http://localhost:3000](http://localhost:3000)
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+---
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+## Built By
 
-## Learn More
+**Abhishek** · NIT Allahabad '24 · Backend Engineer
+Open to backend roles · Available from April 2026
 
-To learn more about Next.js, take a look at the following resources:
+## Connect with me
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+[![GitHub](https://img.shields.io/badge/GitHub-DevWithAbhishek-black?logo=github)](https://github.com/DevWithAbhishek)
+[![Website](https://img.shields.io/badge/Website-codewithabhishek.in-green?logo=google-chrome)](https://www.codewithabhishek.in/)
+[![LinkedIn](https://img.shields.io/badge/LinkedIn-Abhishek%20Kumar-blue?logo=linkedin)](https://www.linkedin.com/in/abhishekkumar878/)
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
-
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+---

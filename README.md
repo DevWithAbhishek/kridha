@@ -134,7 +134,7 @@ Violating any of these is a bug, not a missing feature.
 | Database | PostgreSQL 16 via Neon | PostGIS for radius queries, free tier for zero-cost deploy |
 | ORM | Prisma | Type-safe queries, migration history, `$transaction()` |
 | Cache | Upstash Redis | HTTP-based, serverless-compatible, sliding window rate limiting |
-| Auth | Truecaller SDK + PIN (Argon2)| Hindi-first UX — one-tap for 90% of users |
+| Auth | Phone + PIN (Argon2)| Hindi-first UX — one-tap for 90% of users |
 | Payments | Razorpay | Advance + payment links + webhook idempotency |
 | Images | Cloudinary | Signed uploads, auto-compression, blurHash placeholders |
 | i18n | next-intl | Hindi-first, English fallback |

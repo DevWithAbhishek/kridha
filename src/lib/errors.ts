@@ -20,7 +20,7 @@ export class AppError extends Error {
 }
 
 export const ERR = {
-  // ── Auth ────────────────────────────────────────────────────────────────
+  // ── Auth ──────────────────────────────────────────────────────────────
 
   // 401 — token missing, malformed, or expired
   UNAUTHORIZED: new AppError("UNAUTHORIZED", "Please login to continue.", 401),
@@ -32,7 +32,7 @@ export const ERR = {
     401,
   ),
 
-  // 401 — wrong phone or PIN on login (same message for both — prevents enumeration)
+  // 401 — wrong phone or PIN (same message for both — prevents enumeration)
   INVALID_CREDENTIALS: new AppError(
     "INVALID_CREDENTIALS",
     "Invalid phone or PIN.",
@@ -60,7 +60,7 @@ export const ERR = {
     429,
   ),
 
-  // ── Authorisation ───────────────────────────────────────────────────────
+  // ── Authorisation ─────────────────────────────────────────────────────
 
   // 403 — valid token, wrong role (e.g. BUYER hitting seller route)
   FORBIDDEN: new AppError(
@@ -69,14 +69,14 @@ export const ERR = {
     403,
   ),
 
-  // 403 — valid token, right role, wrong ownership (e.g. editing another seller's product)
+  // 403 — valid token, right role, wrong ownership
   NOT_YOUR_PRODUCT: new AppError(
     "NOT_YOUR_PRODUCT",
     "You can only modify your own products.",
     403,
   ),
 
-  // ── Validation ──────────────────────────────────────────────────────────
+  // ── Validation ────────────────────────────────────────────────────────
 
   // 422 — Zod parse failed (converted from ZodError in handleError)
   // meta carries err.errors array from Zod
@@ -88,7 +88,7 @@ export const ERR = {
       meta,
     ),
 
-  // ── Products ────────────────────────────────────────────────────────────
+  // ── Products ──────────────────────────────────────────────────────────
 
   // 404 — product does not exist or has been soft-deleted
   PRODUCT_NOT_FOUND: new AppError(
@@ -104,10 +104,14 @@ export const ERR = {
     400,
   ),
 
-  // ── Orders ──────────────────────────────────────────────────────────────
+  // ── Orders ────────────────────────────────────────────────────────────
+
+  // 404 — order does not exist
+  ORDER_NOT_FOUND: new AppError("ORDER_NOT_FOUND", "Order not found.", 404),
 
   // 409 — requested quantity exceeds product.available
-  // meta: { productId: string, requested: number, available: number }
+  // meta: { productId: string, productName: string,
+  //         requested: number, available: number }
   INSUFFICIENT_STOCK: (meta?: unknown) =>
     new AppError(
       "INSUFFICIENT_STOCK",
@@ -117,7 +121,7 @@ export const ERR = {
     ),
 
   // 400 — order total below platform minimum
-  // meta: { minimum: number }
+  // meta: { minimum: number, current: number }
   BELOW_MINIMUM_ORDER: (meta?: unknown) =>
     new AppError(
       "BELOW_MINIMUM_ORDER",
@@ -133,8 +137,29 @@ export const ERR = {
     400,
   ),
 
+  // 400 — pickup date is in the past or outside seller active days
+  INVALID_PICKUP_DATE: new AppError(
+    "INVALID_PICKUP_DATE",
+    "Pickup date is invalid or in the past.",
+    400,
+  ),
+
+  // 409 — active order already exists for this product and pickup window
+  DUPLICATE_ORDER: new AppError(
+    "DUPLICATE_ORDER",
+    "An active order already exists for this product and pickup window.",
+    409,
+  ),
+
+  // 400 — order cannot be cancelled at this stage
+  CANCELLATION_NOT_ALLOWED: new AppError(
+    "CANCELLATION_NOT_ALLOWED",
+    "Order cannot be cancelled at this stage.",
+    400,
+  ),
+
   // 409 — state machine rejected the transition
-  // meta: { from: OrderStatus, to: OrderStatus }
+  // meta: { currentStatus: string, cancellableStatuses?: string[] }
   INVALID_TRANSITION: (meta?: unknown) =>
     new AppError(
       "INVALID_TRANSITION",
@@ -149,13 +174,22 @@ export const ERR = {
   // 429 — too many consecutive wrong OTP attempts
   OTP_ATTEMPTS: new AppError(
     "OTP_ATTEMPTS",
-    "Too many OTP attempts. Please request a new OTP.",
+    "Too many incorrect attempts.",
     429,
   ),
 
-  // ── Generic fallback ────────────────────────────────────────────────────
+  // ── External Services ─────────────────────────────────────────────────
 
-  // 404 — generic, use specific codes above where possible
+  // 502 — Razorpay API call failed (retryable)
+  RAZORPAY_ERROR: new AppError(
+    "RAZORPAY_ERROR",
+    "Payment service error. Please retry.",
+    502,
+  ),
+
+  // ── Generic fallback ──────────────────────────────────────────────────
+
+  // 404 — use specific codes above where possible
   NOT_FOUND: (resource: string) =>
     new AppError("NOT_FOUND", `${resource} not found.`, 404),
 } as const;

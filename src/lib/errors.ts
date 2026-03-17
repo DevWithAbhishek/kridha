@@ -187,6 +187,22 @@ export const ERR = {
     502,
   ),
 
+  // ── Notifications ─────────────────────────────────────────────────────
+
+  // 404 — notification does not exist
+  NOTIFICATION_NOT_FOUND: new AppError(
+    "NOTIFICATION_NOT_FOUND",
+    "Notification not found.",
+    404,
+  ),
+
+  // 403 — notification belongs to a different user
+  NOT_YOUR_NOTIFICATION: new AppError(
+    "NOT_YOUR_NOTIFICATION",
+    "You cannot access this notification.",
+    403,
+  ),
+
   // ── Generic fallback ──────────────────────────────────────────────────
 
   // 404 — use specific codes above where possible

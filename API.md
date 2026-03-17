@@ -1505,6 +1505,185 @@ All other events →
 
 ---
 
+## 7. Notifications
+
+### GET /api/notifications
+Fetch all notifications for the authenticated user.
+Both BUYER and SELLER use the same endpoint —
+results are automatically filtered to `req.user.id`.
+```
+Auth:    Bearer (BUYER or SELLER)
+Body:    None
+
+Query params:
+  status    String    optional — READ | UNREAD
+                                 omit to return all
+  page      Int       optional — default: 1
+  limit     Int       optional — default: 20, max: 50
+  sortBy    String    optional — created_asc | created_desc
+                                 default: created_desc
+```
+
+**Success**
+```
+200: {
+  "success": true,
+  "data": {
+    "notifications": [
+      {
+        "id":          string,
+        "title":       string,
+        "body":        string,
+        "type":        string,
+        "read":        boolean,
+        "orderId":     string | null,
+        "createdAt":   string
+      }
+    ],
+    "unreadCount": number,
+    "meta": {
+      "page":     number,
+      "limit":    number,
+      "total":    number,
+      "hasMore":  boolean
+    }
+  }
+}
+```
+
+**Errors**
+```
+401:  UNAUTHORIZED  — "Please login to continue."
+```
+
+> Zero notifications returns `200` with `notifications: []` and
+> `total: 0`. Never returns `404`.
+>
+> `unreadCount` is always returned regardless of status filter —
+> used to render the bell badge in the UI.
+
+---
+
+### GET /api/notifications/:id
+Fetch a single notification by ID.
+```
+Auth:    Bearer (BUYER or SELLER)
+Rule:    req.user.id must equal notification.userId
+         Anyone else receives 403 even with a valid token.
+Body:    None
+```
+
+**Success**
+```
+200: {
+  "success": true,
+  "data": {
+    "notification": {
+      "id":          string,
+      "title":       string,
+      "body":        string,
+      "type":        string,
+      "read":        boolean,
+      "orderId":     string | null,
+      "createdAt":   string
+    }
+  }
+}
+```
+
+**Errors**
+```
+401:  UNAUTHORIZED           — "Please login to continue."
+403:  FORBIDDEN              — "You cannot access this notification."
+404:  NOTIFICATION_NOT_FOUND — "Notification not found."
+```
+
+---
+
+### PATCH /api/notifications/:id
+Mark a single notification as read.
+```
+Auth:    Bearer (BUYER or SELLER)
+Rule:    req.user.id must equal notification.userId
+Body:    None
+```
+
+**Success**
+```
+200: {
+  "success": true,
+  "data": {
+    "notification": {
+      "id":    string,
+      "read":  true
+    }
+  }
+}
+```
+
+**Errors**
+```
+401:  UNAUTHORIZED           — "Please login to continue."
+403:  FORBIDDEN              — "You cannot access this notification."
+404:  NOTIFICATION_NOT_FOUND — "Notification not found."
+```
+
+> Calling this on an already-read notification returns `200` —
+> idempotent, no error.
+
+---
+
+### PATCH /api/notifications/read-all
+Mark all notifications as read for the authenticated user.
+```
+Auth:    Bearer (BUYER or SELLER)
+Body:    None
+```
+
+**Success**
+```
+200: {
+  "success": true,
+  "data": {
+    "updated": number
+  }
+}
+```
+
+**Errors**
+```
+401:  UNAUTHORIZED  — "Please login to continue."
+```
+
+> If zero unread notifications exist returns
+> `200` with `{ updated: 0 }`. Never an error.
+
+---
+
+### DELETE /api/notifications/:id
+Permanently delete a notification.
+Hard delete — row is removed from DB.
+```
+Auth:    Bearer (BUYER or SELLER)
+Rule:    req.user.id must equal notification.userId
+Body:    None
+```
+
+**Success**
+```
+200: {
+  "success": true,
+  "message": "Notification deleted."
+}
+```
+
+**Errors**
+```
+401:  UNAUTHORIZED           — "Please login to continue."
+403:  FORBIDDEN              — "You cannot access this notification."
+404:  NOTIFICATION_NOT_FOUND — "Notification not found."
+```
+
 
 
 ## Error Code Reference

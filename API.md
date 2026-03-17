@@ -1034,6 +1034,479 @@ Auto transform:   f_auto, q_auto, w_1200 applied on upload
 
 ---
 
+
+## 5. Orders
+
+### POST /api/orders
+Create a new order. Calculates price server-side from PriceTier — client
+never sends price. Decrements stock atomically inside a single
+`prisma.$transaction()` with `SELECT FOR UPDATE`. Creates Razorpay advance
+order in the same flow.
+```
+Auth:    Bearer (BUYER only)
+Body:    {
+  items: [
+    {
+      productId:      string    required — cuid
+      quantity:       number    required — positive, multiple of unitIncrement
+      pickupWindowId: string    required — cuid
+      pickupDate:     string    required — DateTime, must be future date
+                                           within seller's active days
+    }
+  ]
+  cartSessionId?:   string    optional — if placing multi-seller cart order
+}
+```
+
+**Success**
+```
+201: {
+  "success": true,
+  "data": {
+    "order": {
+      "id":               string,
+      "shortId":          string,
+      "status":           "PENDING",
+      "totalAmount":      number,
+      "advanceAmount":    number,
+      "remainingAmount":  number,
+      "platformFeeAmount": number,
+      "items": [
+        {
+          "productId":    string,
+          "productName":  string,
+          "quantity":     number,
+          "unitPrice":    number,
+          "subtotal":     number
+        }
+      ],
+      "pickupWindow": {
+        "id":             string,
+        "label":          string,
+        "labelHi":        string,
+        "startTime":      string,
+        "endTime":        string,
+        "date":           string
+      },
+      "seller": {
+        "id":             string,
+        "name":           string,
+        "storeName":      string
+      }
+    },
+    "advance": {
+      "razorpayOrderId":  string,
+      "amount":           number,
+      "currency":         "INR"
+    }
+  }
+}
+```
+
+**Errors**
+```
+400:  BELOW_MINIMUM_ORDER   — "Order total is below the minimum order amount."
+                               meta: { minimum: 1000, current: number }
+400:  WINDOW_UNAVAILABLE    — "This pickup window is unavailable."
+400:  INVALID_PICKUP_DATE   — "Pickup date is invalid or in the past."
+401:  UNAUTHORIZED          — "Please login to continue."
+403:  FORBIDDEN             — "Only buyers can place orders."
+409:  INSUFFICIENT_STOCK    — "Not enough stock available."
+                               meta: { productId, productName,
+                                       requested, available }
+409:  DUPLICATE_ORDER       — "An active order already exists for this
+                               product and pickup window."
+422:  VALIDATION_FAILED     — { "fields": [{ "path", "message" }] }
+502:  RAZORPAY_ERROR        — "Payment service error. Please retry."
+```
+
+> **Price is always calculated server-side** from PriceTier + quantity.
+> Never trust client-supplied price. Client sends quantity only.
+>
+> **Stock decrement** happens inside `prisma.$transaction()` with
+> `SELECT FOR UPDATE`. Two concurrent buyers for the last item —
+> exactly one gets 201, one gets 409 INSUFFICIENT_STOCK.
+>
+> **Advance formula:** `MIN(₹500, MAX(₹100, total × 5%))`
+> ₹1000 order → ₹100 advance. ₹5000 order → ₹250. ₹10000+ → ₹500.
+
+---
+
+### GET /api/orders
+List orders for the authenticated user. BUYER sees orders they placed.
+SELLER sees orders placed with them. Same endpoint — role determines
+the DB filter.
+```
+Auth:    Bearer (BUYER or SELLER)
+Body:    None
+
+Query params:
+  status    String    optional — PENDING | CONFIRMED | AWAITING_PAYMENT |
+                                 READY_FOR_OTP_VERIFICATION | COMPLETED |
+                                 CANCELLED | DISPUTED
+  page      Int       optional — default: 1
+  limit     Int       optional — default: 20
+  sortBy    String    optional — created_asc | created_desc
+                                 default: created_desc
+```
+
+**Success**
+```
+200: {
+  "success": true,
+  "data": {
+    "orders": [
+      {
+        "id":             string,
+        "shortId":        string,
+        "status":         string,
+        "totalAmount":    number,
+        "advanceAmount":  number,
+        "pickupDate":     string,
+        "pickupWindow": {
+          "label":        string,
+          "labelHi":      string,
+          "startTime":    string,
+          "endTime":      string
+        },
+        "items": [
+          {
+            "productName": string,
+            "quantity":    number
+          }
+        ],
+        "seller": {
+          "name":         string,
+          "storeName":    string
+        },
+        "buyer": {
+          "name":         string
+        }
+      }
+    ],
+    "meta": {
+      "page":     number,
+      "limit":    number,
+      "total":    number,
+      "hasMore":  boolean
+    }
+  }
+}
+```
+
+**Errors**
+```
+401:  UNAUTHORIZED  — "Please login to continue."
+```
+
+> Zero orders returns `200` with `orders: []` and `total: 0`. Never `404`.
+>
+> BUYER response includes `seller` field.
+> SELLER response includes `buyer` field.
+> Both always present in response — client decides which to display.
+
+---
+
+### GET /api/orders/:id
+Fetch full detail of a single order including complete status history.
+```
+Auth:    Bearer
+Rule:    req.user.id must equal order.buyerId
+         OR req.user.id must equal order.sellerId
+         OR req.user.role must equal ADMIN
+         Anyone else receives 403 even with a valid token.
+Body:    None
+```
+
+**Success**
+```
+200: {
+  "success": true,
+  "data": {
+    "order": {
+      "id":                 string,
+      "shortId":            string,
+      "status":             string,
+      "totalAmount":        number,
+      "advanceAmount":      number,
+      "remainingAmount":    number,
+      "platformFeeAmount":  number,
+      "paymentMode":        string,
+      "advanceStatus":      string,
+      "items": [
+        {
+          "productId":      string,
+          "productName":    string,
+          "quantity":       number,
+          "unitPrice":      number,
+          "subtotal":       number
+        }
+      ],
+      "statusHistory": [
+        {
+          "status":         string,
+          "timestamp":      string,
+          "note":           string | null
+        }
+      ],
+      "pickupWindow": {
+        "id":               string,
+        "label":            string,
+        "labelHi":          string,
+        "startTime":        string,
+        "endTime":          string,
+        "date":             string
+      },
+      "buyer": {
+        "id":               string,
+        "name":             string
+      },
+      "seller": {
+        "id":               string,
+        "name":             string,
+        "storeName":        string,
+        "reliabilityScore": number
+      }
+    }
+  }
+}
+```
+
+**Errors**
+```
+401:  UNAUTHORIZED    — "Please login to continue."
+403:  FORBIDDEN       — "You are not authorised to view this order."
+404:  ORDER_NOT_FOUND — "Order not found."
+```
+
+---
+
+### PATCH /api/orders/:id/cancel
+Cancel an order. Refund amount depends on how far the cancellation is
+from the scheduled pickup time.
+```
+Auth:    Bearer (BUYER or SELLER)
+Rule:    BUYER  can cancel: PENDING, CONFIRMED
+         SELLER can cancel: PENDING, CONFIRMED
+                            buyer receives 100% refund
+                            seller reliabilityScore −15
+         NEITHER can cancel: AWAITING_PAYMENT, READY_FOR_OTP_VERIFICATION,
+                             COMPLETED, CANCELLED, DISPUTED
+Body:    {
+  reason?:  string   optional
+}
+```
+
+**Refund tiers**
+```
+Cancel before advance paid           → no charge
+Cancel 24h+ before pickup            → 100% advance refunded to buyer
+Cancel 2–24h before pickup           → 50% to buyer, 50% to seller
+Cancel within 2h or on inspection    → 0% to buyer, 100% to seller
+Seller cancels at any point          → 100% to buyer, seller score −15
+```
+
+**Success**
+```
+200: {
+  "success": true,
+  "data": {
+    "order": {
+      "id":       string,
+      "status":   "CANCELLED"
+    },
+    "refundAmount":  number,
+    "refundStatus":  "INITIATED" | "NOT_APPLICABLE"
+  }
+}
+```
+
+**Errors**
+```
+401:  UNAUTHORIZED             — "Please login to continue."
+403:  FORBIDDEN                — "You are not authorised to cancel this order."
+404:  ORDER_NOT_FOUND          — "Order not found."
+409:  INVALID_TRANSITION       — "Order cannot be cancelled in its current status."
+                                  meta: { currentStatus, cancellableStatuses }
+400:  CANCELLATION_NOT_ALLOWED — "Order cannot be cancelled at this stage."
+```
+
+---
+
+### POST /api/orders/:id/advance
+Retry the advance payment flow. Used when buyer closes the Razorpay
+modal before completing payment and needs to reopen it.
+```
+Auth:    Bearer (BUYER — own order only)
+Rule:    Order status must be PENDING
+Body:    None
+```
+
+**Success**
+```
+200: {
+  "success": true,
+  "data": {
+    "razorpayOrderId":  string,
+    "amount":           number,
+    "currency":         "INR"
+  }
+}
+```
+
+**Errors**
+```
+401:  UNAUTHORIZED        — "Please login to continue."
+403:  FORBIDDEN           — "Only the buyer can retry advance payment."
+404:  ORDER_NOT_FOUND     — "Order not found."
+409:  INVALID_TRANSITION  — "Advance payment only available for PENDING orders."
+502:  RAZORPAY_ERROR      — "Payment service error. Please retry."
+```
+
+---
+
+### POST /api/orders/:id/request-payment
+Seller requests a Razorpay payment link for the remaining order amount.
+Called after buyer has arrived, inspected goods, and is ready to pay.
+Transitions order from CONFIRMED → AWAITING_PAYMENT.
+```
+Auth:    Bearer (SELLER — own order only)
+Rule:    Order status must be CONFIRMED
+Body:    None
+```
+
+**Success**
+```
+200: {
+  "success": true,
+  "data": {
+    "paymentLinkUrl":   string,
+    "paymentLinkId":    string,
+    "expiresAt":        string,
+    "remainingAmount":  number
+  }
+}
+```
+
+**Errors**
+```
+401:  UNAUTHORIZED        — "Please login to continue."
+403:  FORBIDDEN           — "Only the seller can request payment."
+404:  ORDER_NOT_FOUND     — "Order not found."
+409:  INVALID_TRANSITION  — "Payment can only be requested for CONFIRMED orders."
+502:  RAZORPAY_ERROR      — "Payment link creation failed. Please retry."
+```
+
+> **Side effect:** order transitions CONFIRMED → AWAITING_PAYMENT immediately.
+> Payment link expires in 30 minutes. After expiry seller must call this
+> endpoint again to generate a new link.
+
+---
+
+### POST /api/orders/:id/verify-otp
+Seller enters the OTP read aloud by the buyer to complete the order.
+OTP is generated when order reaches CONFIRMED status and delivered
+to buyer via in-app notification.
+```
+Auth:    Bearer (SELLER — own order only)
+Rule:    Order status must be READY_FOR_OTP_VERIFICATION
+Body:    {
+  otp:  string   required — 4 digits
+}
+```
+
+**Success**
+```
+200: {
+  "success": true,
+  "data": {
+    "order": {
+      "id":     string,
+      "status": "COMPLETED"
+    }
+  }
+}
+```
+
+**Errors**
+```
+400:  INVALID_OTP         — "Invalid or expired OTP."
+401:  UNAUTHORIZED        — "Please login to continue."
+403:  FORBIDDEN           — "Only the seller can verify OTP."
+404:  ORDER_NOT_FOUND     — "Order not found."
+409:  INVALID_TRANSITION  — "OTP verification only available for orders in
+                             READY_FOR_OTP_VERIFICATION status."
+429:  OTP_ATTEMPTS        — "Too many incorrect attempts."
+```
+
+> **Side effects on COMPLETED:**
+> - `deliveryOtp` set to `null` immediately — never stored beyond use (INV-06)
+> - Payout record created for seller (amount = total − platformFee)
+> - In-app notification fires for buyer and seller
+> - After 3 wrong attempts order moves to DISPUTED status
+
+---
+
+## 6. Payments
+
+### POST /api/webhooks/razorpay
+Receives payment event callbacks from Razorpay. HMAC signature verified
+on every request. Always returns 200 — Razorpay retries on any non-200
+response which causes double-processing.
+```
+Auth:    None — Razorpay calls this directly
+         HMAC signature verified server-side using RAZORPAY_WEBHOOK_SECRET
+         Signature failure → log to Sentry → return 200 silently
+Body:    Razorpay webhook payload (received from Razorpay)
+         {
+           event:    string,
+           payload:  { payment: { entity: { id, amount, ... } } }
+         }
+```
+
+**Events handled**
+```
+payment.captured →
+  Idempotency check: WebhookLog.razorpayPaymentId @unique
+  If already processed → return 200 immediately (no reprocessing)
+  If new →
+    order: PENDING → CONFIRMED
+    generate deliveryOtp (4 digits)
+    insert into WebhookLog atomically
+    fire notification → buyer (OTP + pickup window)
+    fire notification → seller (new order confirmed)
+
+payment_link.paid →
+  Idempotency check: WebhookLog.razorpayPaymentId @unique
+  If already processed → return 200 immediately
+  If new →
+    order: AWAITING_PAYMENT → READY_FOR_OTP_VERIFICATION
+    insert into WebhookLog atomically
+    fire notification → buyer (show OTP to seller)
+    fire notification → seller (buyer is ready, request OTP)
+
+All other events →
+  Log event type
+  Return 200 (ignore safely — do not error)
+```
+
+**Success**
+```
+200: { "success": true, "received": true }
+```
+
+> **Always returns 200. No exceptions.**
+> Signature failure, processing error, duplicate event —
+> all return 200. Errors are logged to Sentry, never exposed
+> to Razorpay. This prevents Razorpay retry storms.
+>
+> This is INV-03: payment webhook processed exactly once.
+> `WebhookLog.razorpayPaymentId @unique` enforces idempotency at DB level.
+
+---
+
+
+
 ## Error Code Reference
 
 | Code | HTTP | When it occurs |
@@ -1049,12 +1522,17 @@ Auto transform:   f_auto, q_auto, w_1200 applied on upload
 | `PRODUCT_NOT_FOUND` | 404 | Product does not exist or has been soft-deleted. |
 | `NOT_YOUR_PRODUCT` | 403 | Product exists but belongs to a different seller. |
 | `DEAL_CONFIG_INVALID` | 400 | `dealExpiresAt` missing when `dealDiscountPercent` is set. |
+| `ORDER_NOT_FOUND` | 404 | Order does not exist. |
 | `INSUFFICIENT_STOCK` | 409 | Requested quantity exceeds `product.available`. |
 | `BELOW_MINIMUM_ORDER` | 400 | Order total below platform minimum of ₹1000. |
 | `WINDOW_UNAVAILABLE` | 400 | Pickup window is closed or does not exist. |
+| `INVALID_PICKUP_DATE` | 400 | Pickup date is in the past or outside seller active days. |
+| `DUPLICATE_ORDER` | 409 | Active order already exists for this product and window. |
+| `CANCELLATION_NOT_ALLOWED` | 400 | Order cannot be cancelled at this stage. |
 | `INVALID_OTP` | 400 | OTP is incorrect or has already been cleared. |
 | `OTP_ATTEMPTS` | 429 | Too many consecutive wrong OTP attempts. |
 | `INVALID_TRANSITION` | 409 | Order state machine rejected this status transition. |
+| `RAZORPAY_ERROR` | 502 | Razorpay API call failed. Retryable. |
 
 ---
 

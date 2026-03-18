@@ -61,6 +61,22 @@ Use `POST /api/auth/refresh` to get a new pair silently.
   - [DELETE /api/products/:id](#delete-apiproductsid)
 - [Upload](#upload)
   - [POST /api/upload/sign](#post-apiuploadsign)
+- [Orders](#orders)
+  - [POST /api/orders](#post-apiorders)
+  - [GET /api/orders](#get-apiorders)
+  - [GET /api/orders/:id](#get-apiordersid)
+  - [PATCH /api/orders/:id/cancel](#patch-apiordersidcancel)
+  - [POST /api/orders/:id/advance](#post-apiordersidadvance)
+  - [POST /api/orders/:id/request-payment](#post-apiordersidrequest-payment)
+  - [POST /api/orders/:id/verify-otp](#post-apiordersidverify-otp)
+- [Payments](#payments)
+  - [POST /api/webhooks/razorpay](#post-apiwebhooksrazorpay)
+- [Notifications](#notifications)
+  - [GET /api/notifications](#get-apinotifications)
+  - [GET /api/notifications/:id](#get-apinotificationsid)
+  - [PATCH /api/notifications/:id](#patch-apinotificationsid)
+  - [PATCH /api/notifications/read-all](#patch-apinotificationsread-all)
+  - [DELETE /api/notifications/:id](#delete-apinotificationsid)
 - [Error Code Reference](#error-code-reference)
 - [System Invariants](#system-invariants)
 
@@ -210,7 +226,7 @@ Body:    None
 
 **Errors**
 ```
-401:  UNAUTHORIZED — "Invalid or expired token."
+401:  UNAUTHENTICATED — "Invalid or expired token."
 ```
 
 ---
@@ -222,7 +238,7 @@ Body:    None
 Fetch nearby products filtered by location and optional criteria.
 Results are paginated. Default sort is by distance (nearest first).
 ```
-Auth:    Bearer (BUYER or SELLER)
+Auth:    None (Public)
 Body:    None
 
 Query params:
@@ -302,7 +318,7 @@ Query params:
 
 **Errors**
 ```
-401:  UNAUTHORIZED — "Please login to continue."
+None
 ```
 
 > Zero results returns `200` with `products: []` and `total: 0`.
@@ -314,7 +330,7 @@ Query params:
 
 Fetch full detail of a single product by ID.
 ```
-Auth:    Bearer (BUYER or SELLER)
+Auth:    None (Public)
 Body:    None
 ```
 
@@ -330,7 +346,6 @@ Body:    None
 
 **Errors**
 ```
-401:  UNAUTHORIZED        — "Please login to continue."
 404:  PRODUCT_NOT_FOUND   — "Product not found or no longer available."
 ```
 
@@ -378,8 +393,8 @@ Query params:
 
 **Errors**
 ```
-401:  UNAUTHORIZED  — "Please login to continue."
-403:  FORBIDDEN     — "Only sellers can access this."
+401:  UNAUTHENTICATED — "Invalid or expired token."
+403:  FORBIDDEN       — "You don't have access to this resource."
 ```
 
 > Zero products returns `200` with `products: []`. Never `404`.
@@ -436,11 +451,9 @@ Body:    {
 
 **Errors**
 ```
-400:  DEAL_CONFIG_INVALID  — "dealExpiresAt required when
-                              dealDiscountPercent is set."
-401:  UNAUTHORIZED         — "Please login to continue."
-403:  FORBIDDEN            — "Only sellers can perform this action."
-422:  VALIDATION_FAILED    — { "fields": [{ "path": "...", "message": "..." }] }
+401:  UNAUTHENTICATED  — "Please login to continue."
+403:  FORBIDDEN        — "You don't have access to this resource."
+422:  VALIDATION_FAILED — { "fields": [{ "path": "...", "message": "..." }] }
 ```
 
 > `imageUrls[0]` is the hero/cover image shown in the product feed.
@@ -490,12 +503,10 @@ Body:    {
 
 **Errors**
 ```
-400:  DEAL_CONFIG_INVALID  — "dealExpiresAt required when
-                              dealDiscountPercent is set."
-401:  UNAUTHORIZED         — "Please login to continue."
-403:  FORBIDDEN            — "You can only edit your own products."
-404:  PRODUCT_NOT_FOUND    — "Product not found."
-422:  VALIDATION_FAILED    — { "fields": [{ "path": "...", "message": "..." }] }
+401:  UNAUTHENTICATED   — "Please login to continue."
+403:  FORBIDDEN         — "You can only edit your own products."
+404:  PRODUCT_NOT_FOUND — "Product not found."
+422:  VALIDATION_FAILED — { "fields": [{ "path": "...", "message": "..." }] }
 ```
 
 ---
@@ -520,7 +531,7 @@ Body:    None
 
 **Errors**
 ```
-401:  UNAUTHORIZED        — "Please login to continue."
+401:  UNAUTHENTICATED     — "Please login to continue."
 403:  FORBIDDEN           — "You can only delete your own products."
 404:  PRODUCT_NOT_FOUND   — "Product not found."
 ```
@@ -556,7 +567,7 @@ Body:    None
 
 **Errors**
 ```
-401:  UNAUTHORIZED  — "Please login to continue."
+401:  UNAUTHENTICATED     — "Please login to continue."
 403:  FORBIDDEN     — "Only sellers can upload product images."
 ```
 
@@ -657,7 +668,7 @@ Body:    {
                                meta: { minimum: 1000, current: number }
 400:  WINDOW_UNAVAILABLE    — "This pickup window is unavailable."
 400:  INVALID_PICKUP_DATE   — "Pickup date is invalid or in the past."
-401:  UNAUTHORIZED          — "Please login to continue."
+401:  UNAUTHENTICATED   — "Please login to continue."
 403:  FORBIDDEN             — "Only buyers can place orders."
 409:  INSUFFICIENT_STOCK    — "Not enough stock available."
                                meta: { productId, productName,
@@ -744,7 +755,7 @@ Query params:
 
 **Errors**
 ```
-401:  UNAUTHORIZED  — "Please login to continue."
+401:  UNAUTHENTICATED   — "Please login to continue."
 ```
 
 > Zero orders returns `200` with `orders: []` and `total: 0`. Never `404`.
@@ -822,8 +833,8 @@ Body:    None
 
 **Errors**
 ```
-401:  UNAUTHORIZED    — "Please login to continue."
-403:  FORBIDDEN       — "You are not authorised to view this order."
+401:  UNAUTHENTICATED   — "Please login to continue."
+403:  FORBIDDEN       — "You are not authorized to view this order."
 404:  ORDER_NOT_FOUND — "Order not found."
 ```
 
@@ -871,12 +882,11 @@ Seller cancels at any point          → 100% to buyer, seller score −15
 
 **Errors**
 ```
-401:  UNAUTHORIZED             — "Please login to continue."
-403:  FORBIDDEN                — "You are not authorised to cancel this order."
+401:  UNAUTHENTICATED          — "Please login to continue."
+403:  FORBIDDEN                — "You are not authorized to cancel this order."
 404:  ORDER_NOT_FOUND          — "Order not found."
 409:  INVALID_TRANSITION       — "Order cannot be cancelled in its current status."
                                   meta: { currentStatus, cancellableStatuses }
-400:  CANCELLATION_NOT_ALLOWED — "Order cannot be cancelled at this stage."
 ```
 
 ---
@@ -904,7 +914,7 @@ Body:    None
 
 **Errors**
 ```
-401:  UNAUTHORIZED        — "Please login to continue."
+401:  UNAUTHENTICATED     — "Please login to continue."
 403:  FORBIDDEN           — "Only the buyer can retry advance payment."
 404:  ORDER_NOT_FOUND     — "Order not found."
 409:  INVALID_TRANSITION  — "Advance payment only available for PENDING orders."
@@ -938,7 +948,7 @@ Body:    None
 
 **Errors**
 ```
-401:  UNAUTHORIZED        — "Please login to continue."
+401:  UNAUTHENTICATED     — "Please login to continue."
 403:  FORBIDDEN           — "Only the seller can request payment."
 404:  ORDER_NOT_FOUND     — "Order not found."
 409:  INVALID_TRANSITION  — "Payment can only be requested for CONFIRMED orders."
@@ -979,7 +989,7 @@ Body:    {
 **Errors**
 ```
 400:  INVALID_OTP         — "Invalid or expired OTP."
-401:  UNAUTHORIZED        — "Please login to continue."
+401:  UNAUTHENTICATED     — "Please login to continue."
 403:  FORBIDDEN           — "Only the seller can verify OTP."
 404:  ORDER_NOT_FOUND     — "Order not found."
 409:  INVALID_TRANSITION  — "OTP verification only available for orders in
@@ -1101,7 +1111,7 @@ Query params:
 
 **Errors**
 ```
-401:  UNAUTHORIZED  — "Please login to continue."
+401:  UNAUTHENTICATED   — "Please login to continue."
 ```
 
 > Zero notifications returns `200` with `notifications: []` and
@@ -1141,7 +1151,7 @@ Body:    None
 
 **Errors**
 ```
-401:  UNAUTHORIZED           — "Please login to continue."
+401:  UNAUTHENTICATED        — "Please login to continue."
 403:  FORBIDDEN              — "You cannot access this notification."
 404:  NOTIFICATION_NOT_FOUND — "Notification not found."
 ```
@@ -1171,7 +1181,7 @@ Body:    None
 
 **Errors**
 ```
-401:  UNAUTHORIZED           — "Please login to continue."
+401:  UNAUTHENTICATED        — "Please login to continue."
 403:  FORBIDDEN              — "You cannot access this notification."
 404:  NOTIFICATION_NOT_FOUND — "Notification not found."
 ```
@@ -1200,7 +1210,7 @@ Body:    None
 
 **Errors**
 ```
-401:  UNAUTHORIZED  — "Please login to continue."
+401:  UNAUTHENTICATED   — "Please login to continue."
 ```
 
 > If zero unread notifications exist returns
@@ -1227,7 +1237,7 @@ Body:    None
 
 **Errors**
 ```
-401:  UNAUTHORIZED           — "Please login to continue."
+401:  UNAUTHENTICATED        — "Please login to continue."
 403:  FORBIDDEN              — "You cannot access this notification."
 404:  NOTIFICATION_NOT_FOUND — "Notification not found."
 ```
@@ -1239,16 +1249,14 @@ Body:    None
 | Code | HTTP | When it occurs |
 |------|------|----------------|
 | `VALIDATION_FAILED` | 422 | Zod schema validation failed. Returns `fields` array with path and message per field. |
-| `UNAUTHORIZED` | 401 | Missing, invalid, or expired Bearer token. |
+| `UNAUTHENTICATED` | 401 | Missing, invalid, or expired Bearer token. |
 | `FORBIDDEN` | 403 | Valid token but wrong role or not the resource owner. |
 | `RATE_LIMITED` | 429 | Too many requests to this endpoint. |
 | `PHONE_EXISTS` | 409 | Phone number already registered on signup. |
 | `INVALID_CREDENTIALS` | 401 | Wrong phone or PIN on login. |
 | `PIN_LOCKED` | 429 | Too many consecutive failed login attempts. |
 | `REFRESH_TOKEN_INVALID` | 401 | Refresh token expired, revoked, or already rotated. |
-| `PRODUCT_NOT_FOUND` | 404 | Product does not exist or has been soft-deleted. |
-| `NOT_YOUR_PRODUCT` | 403 | Product exists but belongs to a different seller. |
-| `DEAL_CONFIG_INVALID` | 400 | `dealExpiresAt` missing when `dealDiscountPercent` is set. |
+| `PRODUCT_NOT_FOUND` | 404 | Product does not exist or has been soft-deleted. |  
 | `ORDER_NOT_FOUND` | 404 | Order does not exist. |
 | `INSUFFICIENT_STOCK` | 409 | Requested quantity exceeds `product.available`. |
 | `BELOW_MINIMUM_ORDER` | 400 | Order total below platform minimum of ₹1000. |
@@ -1260,7 +1268,10 @@ Body:    None
 | `OTP_ATTEMPTS` | 429 | Too many consecutive wrong OTP attempts. |
 | `INVALID_TRANSITION` | 409 | Order state machine rejected this status transition. |
 | `RAZORPAY_ERROR` | 502 | Razorpay API call failed. Retryable. |
-
+| `NOT_YOUR_PRODUCT` | 403 | Product exists but belongs to a different seller. |
+| `DEAL_CONFIG_INVALID` | 400 | `dealExpiresAt` missing when `dealDiscountPercent` is set. |
+| `NOTIFICATION_NOT_FOUND` | 404 | Notification does not exist. |
+| `NOT_YOUR_NOTIFICATION` | 403 | Notification belongs to a different user. |
 ---
 
 ## System Invariants

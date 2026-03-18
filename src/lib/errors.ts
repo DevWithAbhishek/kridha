@@ -23,7 +23,11 @@ export const ERR = {
   // ── Auth ──────────────────────────────────────────────────────────────
 
   // 401 — token missing, malformed, or expired
-  UNAUTHORIZED: new AppError("UNAUTHORIZED", "Please login to continue.", 401),
+  UNAUTHENTICATED: new AppError(
+    "UNAUTHENTICATED",
+    "Please login to continue.",
+    401,
+  ),
 
   // 401 — refresh token expired, revoked, or reuse detected
   REFRESH_TOKEN_INVALID: new AppError(
@@ -60,19 +64,12 @@ export const ERR = {
     429,
   ),
 
-  // ── Authorisation ─────────────────────────────────────────────────────
+  // ── Authorization ─────────────────────────────────────────────────────
 
   // 403 — valid token, wrong role (e.g. BUYER hitting seller route)
   FORBIDDEN: new AppError(
     "FORBIDDEN",
     "You do not have permission to perform this action.",
-    403,
-  ),
-
-  // 403 — valid token, right role, wrong ownership
-  NOT_YOUR_PRODUCT: new AppError(
-    "NOT_YOUR_PRODUCT",
-    "You can only modify your own products.",
     403,
   ),
 
@@ -95,13 +92,6 @@ export const ERR = {
     "PRODUCT_NOT_FOUND",
     "Product not found or no longer available.",
     404,
-  ),
-
-  // 400 — dealDiscountPercent set but dealExpiresAt missing
-  DEAL_CONFIG_INVALID: new AppError(
-    "DEAL_CONFIG_INVALID",
-    "dealExpiresAt is required when dealDiscountPercent is set.",
-    400,
   ),
 
   // ── Orders ────────────────────────────────────────────────────────────

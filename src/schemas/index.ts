@@ -232,7 +232,7 @@ export const CreateOrderSchema = z.object({
       }),
     )
     .min(1, "At least one item is required"),
-  cartSessionId: z.string().min(1).optional(),
+  cartSessionId: z.cuid().optional(),
 });
 
 export const GetOrdersSchema = z.object({

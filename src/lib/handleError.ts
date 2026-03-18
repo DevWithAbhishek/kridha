@@ -50,11 +50,24 @@ export function handleError(err: unknown): NextResponse {
 // ─────────────────────────────────────────────────────────────────────────
 
 // import { NextRequest, NextResponse } from "next/server";
-// import { handleError } from "@/lib/handleError";
 // import { authenticate } from "@/lib/authenticate";
 // import { authorize } from "@/lib/authorize";
 // import { SomeSchema } from "@/schemas";
 // import { someService } from "@/services/some.service";
+//
+// // GET — public route (no auth)
+// export async function GET(req: NextRequest) {
+//   try {
+//     const { searchParams } = new URL(req.url);
+//     const query = SomeSchema.parse(Object.fromEntries(searchParams));
+//
+//     const result = await someService.getAll(query);
+//     return NextResponse.json({ success: true, data: result }, { status: 200 });
+//   } catch (err) {
+//     return handleError(err);
+//   }
+// }
+//
 //
 // // GET — no body, query params only
 // export async function GET(req: NextRequest) {
@@ -90,14 +103,13 @@ export function handleError(err: unknown): NextResponse {
 // // PATCH — JSON body, path param
 // export async function PATCH(
 //   req: NextRequest,
-//   { params }: { params: { id: string } }
+//   { params }: { params: Promise<{ id: string }> }
 // ) {
 //   try {
 //     const user = await authenticate(req);
-//
+//     const { id } = await params;
 //     const body = SomeSchema.parse(await req.json());
-//
-//     const result = await someService.update(user.id, params.id, body);
+//     const result = await someService.update(user.id, id, body);
 //     return NextResponse.json({ success: true, data: result }, { status: 200 });
 //   } catch (err) {
 //     return handleError(err);
@@ -107,12 +119,13 @@ export function handleError(err: unknown): NextResponse {
 // // DELETE — no body, path param
 // export async function DELETE(
 //   req: NextRequest,
-//   { params }: { params: { id: string } }
+//   { params }: { params: Promise<{ id: string }> }
 // ) {
 //   try {
 //     const user = await authenticate(req);
 //
-//     await someService.remove(user.id, params.id);
+//     const { id } = await params;
+//     await someService.remove(user.id, id);
 //     return NextResponse.json(
 //       { success: true, message: "Deleted successfully." },
 //       { status: 200 }

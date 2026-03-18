@@ -43,3 +43,81 @@ export function handleError(err: unknown): NextResponse {
     { status: 500 },
   );
 }
+
+// ─────────────────────────────────────────────────────────────────────────
+// ROUTE HANDLER TEMPLATE — copy-paste into every route file (Days 4–9)
+// Replace: SomeSchema, someService.doSomething, result, 200/201
+// ─────────────────────────────────────────────────────────────────────────
+
+// import { NextRequest, NextResponse } from "next/server";
+// import { handleError } from "@/lib/handleError";
+// import { authenticate } from "@/lib/authenticate";
+// import { authorize } from "@/lib/authorize";
+// import { SomeSchema } from "@/schemas";
+// import { someService } from "@/services/some.service";
+//
+// // GET — no body, query params only
+// export async function GET(req: NextRequest) {
+//   try {
+//     const user = await authenticate(req);
+//     // authorize(user, "SELLER");  ← uncomment if role-restricted
+//
+//     const { searchParams } = new URL(req.url);
+//     const query = SomeSchema.parse(Object.fromEntries(searchParams));
+//
+//     const result = await someService.getAll(user.id, query);
+//     return NextResponse.json({ success: true, data: result }, { status: 200 });
+//   } catch (err) {
+//     return handleError(err);
+//   }
+// }
+//
+// // POST — JSON body
+// export async function POST(req: NextRequest) {
+//   try {
+//     const user = await authenticate(req);
+//     // authorize(user, "SELLER");  ← uncomment if role-restricted
+//
+//     const body = SomeSchema.parse(await req.json());
+//
+//     const result = await someService.create(user.id, body);
+//     return NextResponse.json({ success: true, data: result }, { status: 201 });
+//   } catch (err) {
+//     return handleError(err);
+//   }
+// }
+//
+// // PATCH — JSON body, path param
+// export async function PATCH(
+//   req: NextRequest,
+//   { params }: { params: { id: string } }
+// ) {
+//   try {
+//     const user = await authenticate(req);
+//
+//     const body = SomeSchema.parse(await req.json());
+//
+//     const result = await someService.update(user.id, params.id, body);
+//     return NextResponse.json({ success: true, data: result }, { status: 200 });
+//   } catch (err) {
+//     return handleError(err);
+//   }
+// }
+//
+// // DELETE — no body, path param
+// export async function DELETE(
+//   req: NextRequest,
+//   { params }: { params: { id: string } }
+// ) {
+//   try {
+//     const user = await authenticate(req);
+//
+//     await someService.remove(user.id, params.id);
+//     return NextResponse.json(
+//       { success: true, message: "Deleted successfully." },
+//       { status: 200 }
+//     );
+//   } catch (err) {
+//     return handleError(err);
+//   }
+// }

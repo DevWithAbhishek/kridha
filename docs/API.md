@@ -118,6 +118,34 @@ Use `POST /api/auth/refresh` to get a new pair silently.
   - [PATCH /api/notifications/:id](#patch-apinotificationsid)
   - [PATCH /api/notifications/read-all](#patch-apinotificationsread-all)
   - [DELETE /api/notifications/:id](#delete-apinotificationsid)
+- [Cart](#cart)
+  - [GET /api/cart](#get-apicart)
+  - [POST /api/cart](#post-apicart)
+  - [PATCH /api/cart/:itemId](#patch-apicartitemid)
+  - [DELETE /api/cart/:itemId](#delete-apicartitemid)
+  - [DELETE /api/cart](#delete-apicart)
+  - [POST /api/cart/checkout](#post-apicartcheckout)
+- [Reviews](#reviews)
+  - [GET /api/reviews](#get-apireviews)
+  - [POST /api/reviews](#post-apireviews)
+  - [PATCH /api/reviews/:id](#patch-apireviewsid)
+  - [DELETE /api/reviews/:id](#delete-apireviewsid)
+- [Orders](#orders)
+  - [POST /api/orders](#post-apiorders)
+  - [GET /api/orders](#get-apiorders)
+  - [GET /api/orders/:id](#get-apiordersid)
+  - [PATCH /api/orders/:id/cancel](#patch-apiordersidcancel)
+  - [POST /api/orders/:id/advance](#post-apiordersidadvance)
+  - [POST /api/orders/:id/request-payment](#post-apiordersidrequest-payment)
+  - [POST /api/orders/:id/verify-otp](#post-apiordersidverify-otp)
+- [Payments](#payments)
+  - [POST /api/webhooks/razorpay](#post-apiwebhooksrazorpay)
+- [Notifications](#notifications)
+  - [GET /api/notifications](#get-apinotifications)
+  - [GET /api/notifications/:id](#get-apinotificationsid)
+  - [PATCH /api/notifications/:id](#patch-apinotificationsid)
+  - [PATCH /api/notifications/read-all](#patch-apinotificationsread-all)
+  - [DELETE /api/notifications/:id](#delete-apinotificationsid)
 - [Error Code Reference](#error-code-reference)
 - [System Invariants](#system-invariants)
 
@@ -1398,13 +1426,13 @@ One model, two types. Same product can exist in BOTH lists simultaneously.
  
 ### GET /api/saved
  
-Fetch saved products. Filter by type to get favourites or saved-for-later.
+Fetch saved products. Filter by type to get favorites or saved-for-later.
 ```
 Auth:    Bearer (BUYER)
 Body:    None
  
 Query params:
-  type    String   optional — FAVOURITE | SAVED_FOR_LATER (omit for all)
+  type    String   optional — FAVORITE | SAVED_FOR_LATER (omit for all)
   page    Int      optional — default: 1
   limit   Int      optional — default: 20
 ```
@@ -1417,7 +1445,7 @@ Query params:
     "saved": [
       {
         "id":      string,   — SavedProduct id (use this for DELETE)
-        "type":    string,   — FAVOURITE | SAVED_FOR_LATER
+        "type":    string,   — FAVORITE | SAVED_FOR_LATER
         "product": {
           "id", "name", "nameHi", "category", "isBranded",
           "unit", "unitIncrement", "minOrderQty", "maxOrderQty",
@@ -1443,12 +1471,12 @@ Query params:
  
 ### POST /api/saved
  
-Save a product to Favourites or Saved For Later.
+Save a product to Favorites or Saved For Later.
 ```
 Auth:    Bearer (BUYER)
 Body:    {
   productId:  string   required — cuid
-  type:       enum     required — FAVOURITE | SAVED_FOR_LATER
+  type:       enum     required — FAVORITE | SAVED_FOR_LATER
 }
 ```
  
@@ -1549,7 +1577,399 @@ Auto transform:   f_auto, q_auto, w_1200 applied on upload
 ---
 
 
-## 5. Orders
+
+## Cart
+
+Cart is persisted server-side. One active CartSession per user at a time.
+At checkout, CartItems are converted to SellerOrders — one per seller.
+
+### GET /api/cart
+
+Fetch current active cart with all items and summary.
+```
+Auth:    Bearer (BUYER)
+Body:    None
+```
+
+**Success**
+```
+200: {
+  "success": true,
+  "data": {
+    "cart": {
+      "id":        string | null,   — null if no active cart
+      "expiresAt": string | null,
+      "items": [
+        {
+          "id":             string,   — CartItem id (use for PATCH/DELETE)
+          "productId":      string,
+          "productName":    string,
+          "productNameHi":  string | null,
+          "category":       string,
+          "imageUrls":      string[],
+          "blurHash":       string | null,
+          "unit":           string,
+          "unitIncrement":  number,
+          "available":      number,
+          "dealDiscountPercent": number | null,
+          "dealExpiresAt":  string | null,
+          "dealUpdatedAt":  string | null,
+          "quantity":       number,
+          "unitPrice":      number,   — computed from PriceTier at time of add
+          "lineTotal":      number,
+          "pickupWindowId": string,
+          "pickupWindow": {
+            "labelEn":    string,
+            "labelHi":    string,
+            "startTime":  string,
+            "endTime":    string
+          },
+          "pickupDate":     string,
+          "seller": {
+            "id":        string,
+            "name":      string,
+            "storeName": string
+          }
+        }
+      ],
+      "summary": {
+        "totalItems":   number,
+        "totalAmount":  number,
+        "totalAdvance": number,   — combined advance across all sellers
+        "sellerCount":  number
+      }
+    }
+  }
+}
+```
+
+**Errors**
+```
+401:  UNAUTHENTICATED — "Please login to continue."
+```
+
+> Empty cart returns `200` with `cart: null`. Never `404`.
+
+---
+
+### POST /api/cart
+
+Add an item to cart. Creates CartSession if none exists.
+`pickupWindowId` and `pickupDate` are required — seller must be reachable
+at the chosen time for checkout to proceed.
+```
+Auth:    Bearer (BUYER)
+Body:    {
+  productId:      string   required — cuid
+  quantity:       number   required — positive, multiple of unitIncrement
+  pickupWindowId: string   required — cuid
+  pickupDate:     string   required — ISO DateTime, must be future date
+}
+```
+
+**Success**
+```
+201: {
+  "success": true,
+  "message": "Item added to cart.",
+  "data": {
+    "cartItem": { "id", "productId", "quantity", "pickupWindowId", "pickupDate" }
+  }
+}
+```
+
+**Errors**
+```
+401:  UNAUTHENTICATED    — "Please login to continue."
+404:  PRODUCT_NOT_FOUND  — "Product not found."
+400:  WINDOW_UNAVAILABLE — "This pickup window is unavailable."
+400:  INVALID_PICKUP_DATE — "Pickup date must be in the future."
+409:  INSUFFICIENT_STOCK — meta: { productId, requested, available }
+422:  VALIDATION_FAILED
+```
+
+---
+
+### PATCH /api/cart/:itemId
+
+Update quantity of a cart item.
+```
+Auth:    Bearer (BUYER — own cart only)
+Body:    {
+  quantity: number   required — positive, multiple of unitIncrement
+}
+```
+
+**Success**
+```
+200: {
+  "success": true,
+  "message": "Quantity updated.",
+  "data": { "cartItem": { "id", "quantity", "unitPrice", "lineTotal" } }
+}
+```
+
+**Errors**
+```
+401:  UNAUTHENTICATED     — "Please login to continue."
+403:  FORBIDDEN           — "You can only modify your own cart."
+404:  CART_ITEM_NOT_FOUND — "Cart item not found."
+409:  INSUFFICIENT_STOCK
+422:  VALIDATION_FAILED
+```
+
+---
+
+### DELETE /api/cart/:itemId
+
+Remove a single item from cart.
+```
+Auth:    Bearer (BUYER — own cart only)
+Body:    None
+```
+
+**Success**
+```
+200: { "success": true, "message": "Item removed from cart." }
+```
+
+**Errors**
+```
+401:  UNAUTHENTICATED     — "Please login to continue."
+403:  FORBIDDEN           — "You can only modify your own cart."
+404:  CART_ITEM_NOT_FOUND — "Cart item not found."
+```
+
+---
+
+### DELETE /api/cart
+
+Clear entire cart.
+```
+Auth:    Bearer (BUYER)
+Body:    None
+```
+
+**Success**
+```
+200: { "success": true, "message": "Cart cleared.", "data": { "removed": number } }
+```
+
+**Errors**
+```
+401:  UNAUTHENTICATED — "Please login to continue."
+```
+
+> Clearing an already empty cart returns `200` with `{ removed: 0 }`.
+> Not an error — idempotent operation.
+
+---
+
+### POST /api/cart/checkout
+
+Convert entire cart to orders. One SellerOrder created per seller.
+Server reads items from CartSession — no body needed.
+```
+Auth:    Bearer (BUYER)
+Body:    None
+```
+
+**Success**
+```
+201: {
+  "success": true,
+  "data": {
+    "orderGroupId": string,
+    "orders": [
+      {
+        "id":              string,
+        "shortId":         string,
+        "sellerId":        string,
+        "sellerName":      string,
+        "storeName":       string,
+        "totalAmount":     number,
+        "advanceAmount":   number,
+        "remainingAmount": number,
+        "status":          "PENDING"
+      }
+    ],
+    "advance": {
+      "razorpayOrderId": string,
+      "amount":          number,   — combined advance across all orders
+      "currency":        "INR"
+    }
+  }
+}
+```
+
+**Errors**
+```
+400:  CART_EMPTY          — "Your cart is empty."
+401:  UNAUTHENTICATED     — "Please login to continue."
+400:  BELOW_MINIMUM_ORDER — meta: { sellerId, minimum: 1000, current: number }
+409:  INSUFFICIENT_STOCK  — meta: { productId, productName, requested, available }
+502:  RAZORPAY_ERROR      — "Payment service error. Please retry."
+```
+
+> Cart is cleared after successful checkout.
+> Stock decremented atomically per seller via prisma.$transaction()
+> with SELECT FOR UPDATE. If any seller's stock check fails,
+> all decrements for that seller are rolled back.
+
+---
+
+## Reviews
+
+Reviews can only be written after an order is COMPLETED.
+One review per order per product. Buyer can edit or delete their own review.
+Reading reviews is public — no authentication required.
+
+### GET /api/reviews
+
+Fetch reviews. Filter by productId (buyer view) or sellerId (seller dashboard).
+```
+Auth:    None (Public)
+Body:    None
+
+Query params:
+  productId   String   optional — reviews for a specific product
+  sellerId    String   optional — all reviews across seller's products
+  page        Int      optional — default: 1
+  limit       Int      optional — default: 20
+```
+
+**Success**
+```
+200: {
+  "success": true,
+  "data": {
+    "reviews": [
+      {
+        "id":          string,
+        "rating":      number,   — 1 to 5
+        "comment":     string | null,
+        "createdAt":   string,
+        "updatedAt":   string | null,
+        "buyer": {
+          "name":      string
+        },
+        "product": {
+          "id":        string,
+          "name":      string,
+          "nameHi":    string | null,
+          "imageUrls": string[]
+        }
+      }
+    ],
+    "averageRating": number,
+    "totalCount":    number,
+    "meta": { "page", "limit", "total", "hasMore" }
+  }
+}
+```
+
+**Errors**
+```
+None
+```
+
+> productId and sellerId are both optional.
+> Omitting both returns all reviews (admin use case).
+> Zero reviews returns `200` with `reviews: []`. Never `404`.
+
+---
+
+### POST /api/reviews
+
+Write a review after a completed order.
+`productId` is required — one order can have multiple products,
+the review must be tied to a specific product.
+```
+Auth:    Bearer (BUYER)
+Body:    {
+  orderId:   string   required — cuid, must be COMPLETED order owned by caller
+  productId: string   required — cuid, must be in that order
+  rating:    number   required — 1 to 5
+  comment:   string   optional — max 500 characters
+}
+```
+
+**Success**
+```
+201: {
+  "success": true,
+  "message": "Review added successfully.",
+  "data": {
+    "review": { "id", "rating", "comment", "createdAt" }
+  }
+}
+```
+
+**Errors**
+```
+401:  UNAUTHENTICATED      — "Please login to continue."
+403:  FORBIDDEN            — "You can only review orders you placed and completed."
+404:  ORDER_NOT_FOUND      — "Order not found."
+404:  PRODUCT_NOT_FOUND    — "Product not found in this order."
+409:  REVIEW_ALREADY_EXISTS — "You have already reviewed this product for this order."
+422:  VALIDATION_FAILED
+```
+
+---
+
+### PATCH /api/reviews/:id
+
+Edit own review.
+```
+Auth:    Bearer (BUYER — own review only)
+Body:    {
+  rating?:  number   — 1 to 5
+  comment?: string   — max 500 characters
+}
+```
+
+**Success**
+```
+200: {
+  "success": true,
+  "message": "Review updated successfully.",
+  "data": { "review": { "id", "rating", "comment", "updatedAt" } }
+}
+```
+
+**Errors**
+```
+401:  UNAUTHENTICATED  — "Please login to continue."
+403:  FORBIDDEN        — "You can only edit your own reviews."
+404:  REVIEW_NOT_FOUND — "Review not found."
+422:  VALIDATION_FAILED
+```
+
+---
+
+### DELETE /api/reviews/:id
+
+Delete own review.
+```
+Auth:    Bearer (BUYER — own review only)
+Body:    None
+```
+
+**Success**
+```
+200: { "success": true, "message": "Review deleted successfully." }
+```
+
+**Errors**
+```
+401:  UNAUTHENTICATED  — "Please login to continue."
+403:  FORBIDDEN        — "You can only delete your own reviews."
+404:  REVIEW_NOT_FOUND — "Review not found."
+```
+
+---
+
+## Orders
 
 ### POST /api/orders
 Create a new order. Calculates price server-side from PriceTier — client
@@ -1596,7 +2016,7 @@ Body:    {
       ],
       "pickupWindow": {
         "id":             string,
-        "label":          string,
+        "labelEn":        string,
         "labelHi":        string,
         "startTime":      string,
         "endTime":        string,
@@ -1934,9 +2354,12 @@ Body:    {
   "success": true,
   "data": {
     "order": {
-      "id":     string,
-      "status": "COMPLETED"
-    }
+      "id":            string,
+      "shortId":       string,
+      "status":        "COMPLETED"
+    },
+    "payoutId":        string,   — payout record created for seller
+    "sellerOrderId":   string    — same as order.id (alias for clarity)
   }
 }
 ```
@@ -1960,7 +2383,7 @@ Body:    {
 
 ---
 
-## 6. Payments
+## Payments
 
 ### POST /api/webhooks/razorpay
 Receives payment event callbacks from Razorpay. HMAC signature verified
@@ -2018,7 +2441,7 @@ All other events →
 
 ---
 
-## 7. Notifications
+## Notifications
 
 ### GET /api/notifications
 Fetch all notifications for the authenticated user.
@@ -2217,6 +2640,7 @@ Body:    None
 | `PRODUCT_NOT_FOUND` | 404 | Product does not exist or has been soft-deleted. |
 | `PICKUP_WINDOW_NOT_FOUND` | 404 | Pickup window does not exist. |
 | `LAST_PICKUP_WINDOW` | 400 | Cannot delete the only remaining active pickup window. |
+| `PICKUP_WINDOW_LIMIT` | 400 | Maximum 7 pickup windows allowed. |
 | `ORDER_NOT_FOUND` | 404 | Order does not exist. |
 | `INSUFFICIENT_STOCK` | 409 | Requested quantity exceeds `product.available`. |
 | `BELOW_MINIMUM_ORDER` | 400 | Order total below platform minimum of ₹1000. |
@@ -2232,12 +2656,14 @@ Body:    None
 | `ACCOUNT_HAS_ACTIVE_ORDERS` | 409 | Cannot delete account with active orders. |
 | `ALREADY_SAVED` | 409 | Product already in this saved list. |
 | `SAVED_PRODUCT_NOT_FOUND` | 404 | Saved item does not exist. |
-| `REVIEW_ALREADY_EXISTS` | 409 | Review already submitted for this order. |
+| `REVIEW_ALREADY_EXISTS` | 409 | Review already submitted for this order and product. |
 | `REVIEW_NOT_FOUND` | 404 | Review does not exist. |
 | `NO_ACTIVE_DEAL` | 400 | No active deal on this product. |
+| `DEAL_EXISTS` | 409 | A deal already exists on this product. Delete before adding new one. |
+| `INVALID_EXPIRY_TIME` | 400 | Deal expiry must be in the future. |
 | `NOTIFICATION_NOT_FOUND` | 404 | Notification does not exist. |
 
---- 
+---
 
 ## System Invariants
 
@@ -2257,11 +2683,13 @@ Violating any of these is a bug, not a missing feature.
 | INV-09 | Deal price reverts to original after expiry | Vercel Cron nullifies `dealDiscountPercent` after `dealExpiresAt`. |
 | INV-10 | Order total must be >= ₹1000 | `orderService` checks against `PlatformConfig.minOrderAmount` before creating Razorpay advance. |
 | INV-11 | Order cannot confirm without captured advance | Only `payment.captured` webhook triggers `PENDING → CONFIRMED`. No manual endpoint. |
-| INV-12 | Order cannot complete without full payment AND OTP | State machine requires `READY_FOR_OTP_VERIFICATION` (set by webhook) before verify-otp is callable. |
+| INV-12 | Order cannot complete without full payment AND OTP | State machine requires `READY_FOR_OTP_VERIFICATION` before verify-otp is callable. |
 | INV-13 | Refund calculated server-side only | `cancelOrderService` computes from `Order.pickupDeadline`. Client never sends refundAmount. Tiers: 24h+ → 100%, 2–24h → 50%, <2h → 0%. |
 | INV-14 | Seller cannot see own products in buyer feed | `productRepo` applies `sellerId: { not: req.user.id }` when authenticated user is also a seller. |
 | INV-15 | Review only allowed after COMPLETED order | `reviewService` verifies `order.status === COMPLETED` and `order.buyerId === req.user.id`. |
-| INV-16 | One review per order | `ProductReview.orderId @unique` enforced at DB level. |
-| INV-17 | Bank details masked in all responses | `accountNumber` truncated to last 4 digits in all GET responses. Raw value never leaves server. |
+| INV-16 | One review per order per product | `ProductReview.orderId + productId @@unique` enforced at DB level. |
+| INV-17 | Bank details masked in all responses | `accountNumber` truncated to last 4 digits. Raw value never leaves server. |
+| INV-18 | Client never sends status transitions | No endpoint accepts `status` in request body. State changes only via service layer and webhooks. |
+| INV-19 | Cart checkout reads from server state only | `POST /api/cart/checkout` takes no body. Server reads CartSession from DB. Client cannot inject items. |
 
 ---

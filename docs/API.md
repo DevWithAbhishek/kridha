@@ -51,14 +51,50 @@ Use `POST /api/auth/refresh` to get a new pair silently.
   - [POST /api/auth/refresh](#post-apiauthrefresh)
   - [POST /api/auth/logout](#post-apiauthlogout)
   - [POST /api/auth/logout-all](#post-apiauthlogout-all)
+  - [POST /api/auth/reset-pin-request](#post-apiauthresent-pin-request)
+  - [POST /api/auth/reset-pin](#post-apiauthresent-pin)
+  - [POST /api/auth/register-as-seller](#post-apiauthregister-as-seller)
+- [User Profile](#user-profile)
+  - [GET /api/users/me](#get-apiusersme)
+  - [PATCH /api/users/me](#patch-apiusersme)
+  - [POST /api/users/me/avatar](#post-apiusersmeavatar)
+  - [DELETE /api/users/me/avatar](#delete-apiusersmeavatar)
+  - [DELETE /api/users/me](#delete-apiusersme)
+- [Seller Profile](#seller-profile)
+  - [GET /api/sellers/profile](#get-apisellersprofile)
+  - [PATCH /api/sellers/profile](#patch-apisellersprofile)
+  - [POST /api/sellers/profile/images](#post-apisellersprofileimages)
+  - [DELETE /api/sellers/profile/images/:publicId](#delete-apisellersprofileimagespublicid)
+  - [DELETE /api/sellers/profile](#delete-apisellersprofile)
+- [Pickup Windows](#pickup-windows)
+  - [GET /api/pickup-windows](#get-apipickup-windows)
+  - [POST /api/pickup-windows](#post-apipickup-windows)
+  - [PATCH /api/pickup-windows/:id](#patch-apipickup-windowsid)
+  - [DELETE /api/pickup-windows/:id](#delete-apipickup-windowsid)
 - [Products — Buyer](#products--buyer)
   - [GET /api/products](#get-apiproducts)
   - [GET /api/products/:id](#get-apiproductsid)
+  - [GET /api/products/deals](#get-apiproductsdeals)
 - [Products — Seller](#products--seller)
   - [GET /api/products/mine](#get-apiproductsmine)
   - [POST /api/products](#post-apiproducts)
   - [PATCH /api/products/:id](#patch-apiproductsid)
   - [DELETE /api/products/:id](#delete-apiproductsid)
+  - [POST /api/products/:id/deal](#post-apiproductsiddeal)
+  - [PATCH /api/products/:id/deal](#patch-apiproductsiddeal)
+  - [DELETE /api/products/:id/deal](#delete-apiproductsiddeal)
+- [Saved Products](#saved-products)
+  - [GET /api/saved](#get-apisaved)
+  - [POST /api/saved](#post-apisaved)
+  - [PATCH /api/saved/:id](#patch-apisavedid)
+  - [DELETE /api/saved/:id](#delete-apisavedid)
+- [Cart](#cart)
+  - [GET /api/cart](#get-apicart)
+  - [POST /api/cart](#post-apicart)
+  - [PATCH /api/cart/:itemId](#patch-apicartitemid)
+  - [DELETE /api/cart/:itemId](#delete-apicartitemid)
+  - [DELETE /api/cart](#delete-apicart)
+  - [POST /api/cart/checkout](#post-apicartcheckout)
 - [Upload](#upload)
   - [POST /api/upload/sign](#post-apiuploadsign)
 - [Orders](#orders)
@@ -69,6 +105,11 @@ Use `POST /api/auth/refresh` to get a new pair silently.
   - [POST /api/orders/:id/advance](#post-apiordersidadvance)
   - [POST /api/orders/:id/request-payment](#post-apiordersidrequest-payment)
   - [POST /api/orders/:id/verify-otp](#post-apiordersidverify-otp)
+- [Reviews](#reviews)
+  - [GET /api/reviews](#get-apireviews)
+  - [POST /api/reviews](#post-apireviews)
+  - [PATCH /api/reviews/:id](#patch-apireviewsid)
+  - [DELETE /api/reviews/:id](#delete-apireviewsid)
 - [Payments](#payments)
   - [POST /api/webhooks/razorpay](#post-apiwebhooksrazorpay)
 - [Notifications](#notifications)
@@ -153,8 +194,7 @@ Body:    {
 Exchange a valid refresh token for a new access + refresh token pair.
 Both tokens rotate on every call — the old refresh token is immediately revoked.
 ```
-Auth:    None
-         (refreshToken in body is the credential — no Bearer header)
+Auth:    None (refreshToken in body is the credential — no Bearer header)
 Body:    {
   refreshToken:   string   required
 }
@@ -227,6 +267,606 @@ Body:    None
 **Errors**
 ```
 401:  UNAUTHENTICATED — "Invalid or expired token."
+```
+
+---
+
+### POST /api/auth/reset-pin-request
+
+Initiate PIN reset by requesting an OTP on the registered phone.
+In development this is a dummy — OTP is logged to console, not sent via SMS.
+```
+Auth:    None
+Body:    {
+  phone:   string   required — 10-digit Indian mobile number
+}
+```
+
+**Success**
+```
+200: {
+  "success": true,
+  "message": "OTP sent to your registered mobile number."
+}
+```
+
+**Errors**
+```
+404:  PHONE_NOT_FOUND  — "No account found with this phone number."
+429:  RATE_LIMITED     — "Too many attempts. Try again in 30 minutes."
+422:  VALIDATION_FAILED
+```
+
+> In production: OTP sent via SMS (Twilio — Phase 2).
+> In development: OTP logged to server console.
+> OTP expires in 10 minutes. Stored in OtpRequest table, not User.
+
+---
+
+### POST /api/auth/reset-pin
+
+Verify OTP and set a new PIN.
+```
+Auth:    None
+Body:    {
+  phone:      string   required
+  otp:        string   required — 4 digits
+  newPin:     string   required — exactly 4 digits
+  confirmPin: string   required — must match newPin
+}
+```
+
+**Success**
+```
+200: {
+  "success": true,
+  "message": "PIN reset successfully. Login to continue."
+}
+```
+
+**Errors**
+```
+400:  INVALID_OTP       — "Invalid or expired OTP."
+422:  VALIDATION_FAILED — includes pin mismatch: "newPin and confirmPin must match"
+404:  PHONE_NOT_FOUND   — "No account found with this phone number."
+429:  OTP_ATTEMPTS      — "Too many incorrect attempts."
+```
+
+> newPin ≠ confirmPin returns 422 VALIDATION_FAILED (field-level error),
+> not a new error code. This is caught by Zod before hitting the service.
+
+---
+
+### POST /api/auth/register-as-seller
+
+Upgrade an existing BUYER account to also have SELLER role.
+Creates a SellerProfile with store and bank details.
+Account goes into PENDING verification — seller cannot list products until VERIFIED.
+```
+Auth:    Bearer (BUYER)
+Body:    {
+  storeName:          string   required
+  street:             string   required
+  line2:              string   optional
+  landmark:           string   optional
+  city:               string   required
+  state:              string   required
+  pincode:            string   required — 6 digits
+  businessType:       enum     required
+                      INDIVIDUAL | PROPRIETORSHIP |
+                      PARTNERSHIP | PVT_LTD
+  gstNo:              string   optional
+  panNo:              string   required
+  accountHolderName:  string   required
+  accountNumber:      string   required
+  ifscCode:           string   required
+  bankName:           string   required
+  pickupWindows:      array    required — min 1
+    [{
+      label:          string   required
+      labelHi:        string   required
+      startTime:      string   required — "HH:MM"
+      endTime:        string   required — "HH:MM"
+      daysActive:     string[] required — ["MON","TUE",...]
+    }]
+}
+```
+
+**Success**
+```
+201: {
+  "success": true,
+  "message": "Application submitted. Verification takes 12–48 hours.",
+  "data": {
+    "status":       "PENDING",
+    "bankVerified": false
+  }
+}
+```
+
+**Errors**
+```
+401:  UNAUTHENTICATED   — "Please login to continue."
+409:  STORE_EXISTS      — "A store with this name and address already exists."
+422:  VALIDATION_FAILED
+```
+
+> User roles updated to [BUYER, SELLER] immediately.
+> Seller cannot list products until kycStatus = VERIFIED.
+> Bank details stored encrypted at application layer.
+> accountNumber masked in all GET responses (last 4 digits only).
+
+---
+
+## User Profile
+
+### GET /api/users/me
+
+Fetch the authenticated user's profile.
+```
+Auth:    Bearer (BUYER or SELLER)
+Body:    None
+```
+
+**Success**
+```
+200: {
+  "success": true,
+  "data": {
+    "id":               string,
+    "name":             string,
+    "phone":            string,   — masked: +91 XXXXX X1234
+    "city":             string | null,
+    "state":            string | null,
+    "street":           string | null,
+    "line2":            string | null,
+    "landmark":         string | null,
+    "profileImageUrl":  string | null,
+    "preferredLang":    string,   — "hi" | "en"
+    "roles":            string[],
+    "reliabilityScore": number,
+    "noShowCount":      number,
+    "creditBalance":    number,
+    "isFlagged":        boolean,
+    "createdAt":        string
+  }
+}
+```
+
+**Errors**
+```
+401:  UNAUTHENTICATED — "Please login to continue."
+```
+
+---
+
+### PATCH /api/users/me
+
+Update profile fields. Send only fields being changed.
+```
+Auth:    Bearer (BUYER or SELLER)
+Body:    {
+  name?:          string
+  street?:        string
+  line2?:         string
+  landmark?:      string
+  city?:          string
+  state?:         string
+  preferredLang?: string   — "hi" | "en"
+}
+```
+
+**Success**
+```
+200: {
+  "success": true,
+  "message": "Profile updated successfully."
+}
+```
+
+**Errors**
+```
+401:  UNAUTHENTICATED   — "Please login to continue."
+422:  VALIDATION_FAILED
+```
+
+---
+
+### POST /api/users/me/avatar
+
+Upload or replace profile picture.
+Upload image to Cloudinary first via POST /api/upload/sign — send URL here.
+```
+Auth:    Bearer (BUYER or SELLER)
+Body:    {
+  profileImageUrl:      string   required — Cloudinary URL
+  profileImagePublicId: string   required — Cloudinary public ID
+                                            (needed for deletion)
+}
+```
+
+**Success**
+```
+200: {
+  "success": true,
+  "message": "Profile picture updated successfully."
+}
+```
+
+**Errors**
+```
+401:  UNAUTHENTICATED   — "Please login to continue."
+422:  VALIDATION_FAILED
+```
+
+---
+
+### DELETE /api/users/me/avatar
+
+Remove profile picture.
+```
+Auth:    Bearer (BUYER or SELLER)
+Body:    None
+```
+
+**Success**
+```
+200: {
+  "success": true,
+  "message": "Profile picture removed."
+}
+```
+
+**Errors**
+```
+401:  UNAUTHENTICATED — "Please login to continue."
+404:  NOT_FOUND       — "No profile picture to remove."
+```
+
+---
+
+### DELETE /api/users/me
+
+Permanently delete account.
+Blocked if active orders (PENDING, CONFIRMED, AWAITING_PAYMENT) exist.
+```
+Auth:    Bearer
+Body:    None
+```
+
+**Success**
+```
+200: {
+  "success": true,
+  "message": "Account deleted successfully."
+}
+```
+
+**Errors**
+```
+401:  UNAUTHENTICATED          — "Please login to continue."
+409:  ACCOUNT_HAS_ACTIVE_ORDERS — "Resolve all active orders before
+                                   deleting your account."
+```
+
+> Soft delete — sets User.deletedAt.
+> If user has SELLER role: all products soft-deleted, SellerProfile deactivated.
+> RefreshTokens deleted — all sessions immediately invalidated.
+
+---
+
+## Seller Profile
+
+### GET /api/sellers/profile
+
+Fetch the authenticated seller's store profile.
+```
+Auth:    Bearer (SELLER)
+Body:    None
+```
+
+**Success**
+```
+200: {
+  "success": true,
+  "data": {
+    "storeName":          string,
+    "street":             string,
+    "line2":              string | null,
+    "landmark":           string | null,
+    "city":               string,
+    "state":              string,
+    "pincode":            string,
+    "storeImages": [
+      {
+        "url":            string,
+        "publicId":       string
+      }
+    ],
+    "businessType":       string,
+    "gstNo":              string | null,
+    "panNo":              string,
+    "accountHolderName":  string,
+    "accountNumber":      string,   — masked: XXXXXXXXXXXX1234
+    "ifscCode":           string,
+    "bankName":           string,
+    "bankVerified":       boolean,
+    "status":             string,   — PENDING | VERIFIED | DEACTIVATED
+    "reliabilityScore":   number,
+    "sellerRating":       number,
+    "sellerRatingCount":  number
+  }
+}
+```
+
+**Errors**
+```
+401:  UNAUTHENTICATED — "Please login to continue."
+403:  FORBIDDEN       — "Only sellers can access this."
+404:  NOT_FOUND       — "Seller profile not found."
+```
+
+---
+
+### PATCH /api/sellers/profile
+
+Update store profile fields. Send only fields being changed.
+Pickup windows are managed separately via /api/pickup-windows.
+```
+Auth:    Bearer (SELLER)
+Body:    {
+  storeName?:         string
+  street?:            string
+  line2?:             string
+  landmark?:          string
+  city?:              string
+  state?:             string
+  pincode?:           string
+  businessType?:      enum     INDIVIDUAL | PROPRIETORSHIP | PARTNERSHIP | PVT_LTD
+  gstNo?:             string
+  panNo?:             string
+  accountHolderName?: string
+  accountNumber?:     string
+  ifscCode?:          string
+  bankName?:          string
+}
+```
+
+**Success**
+```
+200: {
+  "success": true,
+  "message": "Store profile updated successfully."
+}
+```
+
+**Errors**
+```
+401:  UNAUTHENTICATED   — "Please login to continue."
+403:  FORBIDDEN         — "Only sellers can access this."
+409:  STORE_EXISTS      — "A store with this name and address already exists."
+422:  VALIDATION_FAILED
+```
+
+> Updating bank details resets bankVerified to false.
+> Admin must re-verify before payouts resume.
+
+---
+
+### POST /api/sellers/profile/images
+
+Add one or more store images.
+Upload to Cloudinary first via POST /api/upload/sign.
+Maximum 5 store images total.
+```
+Auth:    Bearer (SELLER)
+Body:    {
+  images: [
+    {
+      url:      string   required — Cloudinary URL
+      publicId: string   required — Cloudinary public ID
+    }
+  ]
+}
+```
+
+**Success**
+```
+200: {
+  "success": true,
+  "message": "Store images added successfully.",
+  "data": {
+    "storeImages": [{ "url": string, "publicId": string }]
+  }
+}
+```
+
+**Errors**
+```
+401:  UNAUTHENTICATED        — "Please login to continue."
+403:  FORBIDDEN              — "Only sellers can access this."
+400:  STORE_IMAGE_LIMIT      — "Maximum 5 store images allowed."
+422:  VALIDATION_FAILED
+```
+
+---
+
+### DELETE /api/sellers/profile/images/:publicId
+
+Remove a specific store image by its Cloudinary public ID.
+```
+Auth:    Bearer (SELLER)
+Body:    None
+```
+
+**Success**
+```
+200: {
+  "success": true,
+  "message": "Store image removed."
+}
+```
+
+**Errors**
+```
+401:  UNAUTHENTICATED — "Please login to continue."
+403:  FORBIDDEN       — "Only sellers can access this."
+404:  NOT_FOUND       — "Image not found."
+```
+
+---
+
+### DELETE /api/sellers/profile
+
+Deactivate seller account. User remains as BUYER.
+Blocked if active orders exist on any seller order.
+```
+Auth:    Bearer (SELLER)
+Body:    None
+```
+
+**Success**
+```
+200: {
+  "success": true,
+  "message": "Seller profile deactivated. Your buyer account remains active."
+}
+```
+
+**Errors**
+```
+401:  UNAUTHENTICATED          — "Please login to continue."
+403:  FORBIDDEN                — "Only sellers can access this."
+409:  ACCOUNT_HAS_ACTIVE_ORDERS — "Resolve all active seller orders first."
+```
+
+> Removes SELLER from User.roles[]. User retains BUYER role.
+> All products soft-deleted. SellerProfile.status set to DEACTIVATED.
+> Existing COMPLETED orders and payouts are preserved.
+
+---
+
+## Pickup Windows
+
+Sellers manage their available pickup times independently.
+At least one active pickup window is required to receive orders.
+
+### GET /api/pickup-windows
+
+Fetch all pickup windows for the authenticated seller.
+```
+Auth:    Bearer (SELLER)
+Body:    None
+```
+
+**Success**
+```
+200: {
+  "success": true,
+  "data": {
+    "pickupWindows": [
+      {
+        "id":         string,
+        "labelEn":    string,
+        "labelHi":    string,
+        "startTime":  string,
+        "endTime":    string,
+        "daysActive": number[],   — [1,2,3,4,5] Mon=1, Sun=7
+        "deletedAt":  string | null
+      }
+    ]
+  }
+}
+```
+
+**Errors**
+```
+401:  UNAUTHENTICATED — "Please login to continue."
+403:  FORBIDDEN       — "Only sellers can access this."
+```
+
+---
+
+### POST /api/pickup-windows
+
+Create a new pickup window.
+```
+Auth:    Bearer (SELLER)
+Body:    {
+  labelEn:    string   required
+  labelHi:    string   required
+  startTime:  string   required — "HH:MM" format
+  endTime:    string   required — "HH:MM" format, must be after startTime
+  daysActive: number[] required — [1–7], min 1 day
+}
+```
+
+**Success**
+```
+201: {
+  "success": true,
+  "data": { "pickupWindow": { id, labelEn, labelHi, startTime, endTime, daysActive } }
+}
+```
+
+**Errors**
+```
+401:  UNAUTHENTICATED   — "Please login to continue."
+403:  FORBIDDEN         — "Only sellers can access this."
+422:  VALIDATION_FAILED
+```
+
+---
+
+### PATCH /api/pickup-windows/:id
+
+Update an existing pickup window.
+```
+Auth:    Bearer (SELLER — own window only)
+Body:    {
+  labelEn?:    string
+  labelHi?:    string
+  startTime?:  string
+  endTime?:    string
+  daysActive?: number[]
+}
+```
+
+**Success**
+```
+200: { "success": true, "data": { "pickupWindow": { } } }
+```
+
+**Errors**
+```
+401:  UNAUTHENTICATED        — "Please login to continue."
+403:  FORBIDDEN              — "You can only edit your own pickup windows."
+404:  PICKUP_WINDOW_NOT_FOUND — "Pickup window not found."
+422:  VALIDATION_FAILED
+```
+
+---
+
+### DELETE /api/pickup-windows/:id
+
+Soft delete a pickup window. Sets deletedAt.
+Cannot delete if it is the seller's only active window.
+```
+Auth:    Bearer (SELLER — own window only)
+Body:    None
+```
+
+**Success**
+```
+200: { "success": true, "message": "Pickup window removed." }
+```
+
+**Errors**
+```
+401:  UNAUTHENTICATED        — "Please login to continue."
+403:  FORBIDDEN              — "You can only delete your own pickup windows."
+404:  PICKUP_WINDOW_NOT_FOUND — "Pickup window not found."
+400:  LAST_PICKUP_WINDOW     — "Cannot delete your only active pickup window."
 ```
 
 ---
@@ -1248,31 +1888,41 @@ Body:    None
 
 | Code | HTTP | When it occurs |
 |------|------|----------------|
-| `VALIDATION_FAILED` | 422 | Zod schema validation failed. Returns `fields` array with path and message per field. |
+| `VALIDATION_FAILED` | 422 | Zod schema validation failed. Returns `fields` array. |
 | `UNAUTHENTICATED` | 401 | Missing, invalid, or expired Bearer token. |
-| `FORBIDDEN` | 403 | Valid token but wrong role or not the resource owner. |
+| `FORBIDDEN` | 403 | Valid token but wrong role or not resource owner. |
 | `RATE_LIMITED` | 429 | Too many requests to this endpoint. |
-| `PHONE_EXISTS` | 409 | Phone number already registered on signup. |
+| `PHONE_EXISTS` | 409 | Phone already registered on signup. |
+| `PHONE_NOT_FOUND` | 404 | No account found with this phone number. |
 | `INVALID_CREDENTIALS` | 401 | Wrong phone or PIN on login. |
 | `PIN_LOCKED` | 429 | Too many consecutive failed login attempts. |
 | `REFRESH_TOKEN_INVALID` | 401 | Refresh token expired, revoked, or already rotated. |
-| `PRODUCT_NOT_FOUND` | 404 | Product does not exist or has been soft-deleted. |  
+| `STORE_EXISTS` | 409 | Store with same name and address already registered. |
+| `STORE_IMAGE_LIMIT` | 400 | Maximum 5 store images already uploaded. |
+| `PRODUCT_NOT_FOUND` | 404 | Product does not exist or has been soft-deleted. |
+| `PICKUP_WINDOW_NOT_FOUND` | 404 | Pickup window does not exist. |
+| `LAST_PICKUP_WINDOW` | 400 | Cannot delete the only remaining active pickup window. |
 | `ORDER_NOT_FOUND` | 404 | Order does not exist. |
 | `INSUFFICIENT_STOCK` | 409 | Requested quantity exceeds `product.available`. |
 | `BELOW_MINIMUM_ORDER` | 400 | Order total below platform minimum of ₹1000. |
 | `WINDOW_UNAVAILABLE` | 400 | Pickup window is closed or does not exist. |
 | `INVALID_PICKUP_DATE` | 400 | Pickup date is in the past or outside seller active days. |
 | `DUPLICATE_ORDER` | 409 | Active order already exists for this product and window. |
-| `CANCELLATION_NOT_ALLOWED` | 400 | Order cannot be cancelled at this stage. |
 | `INVALID_OTP` | 400 | OTP is incorrect or has already been cleared. |
 | `OTP_ATTEMPTS` | 429 | Too many consecutive wrong OTP attempts. |
 | `INVALID_TRANSITION` | 409 | Order state machine rejected this status transition. |
 | `RAZORPAY_ERROR` | 502 | Razorpay API call failed. Retryable. |
-| `NOT_YOUR_PRODUCT` | 403 | Product exists but belongs to a different seller. |
-| `DEAL_CONFIG_INVALID` | 400 | `dealExpiresAt` missing when `dealDiscountPercent` is set. |
+| `CART_EMPTY` | 400 | Checkout attempted with empty cart. |
+| `CART_ITEM_NOT_FOUND` | 404 | Cart item does not exist. |
+| `ACCOUNT_HAS_ACTIVE_ORDERS` | 409 | Cannot delete account with active orders. |
+| `ALREADY_SAVED` | 409 | Product already in this saved list. |
+| `SAVED_PRODUCT_NOT_FOUND` | 404 | Saved item does not exist. |
+| `REVIEW_ALREADY_EXISTS` | 409 | Review already submitted for this order. |
+| `REVIEW_NOT_FOUND` | 404 | Review does not exist. |
+| `NO_ACTIVE_DEAL` | 400 | No active deal on this product. |
 | `NOTIFICATION_NOT_FOUND` | 404 | Notification does not exist. |
-| `NOT_YOUR_NOTIFICATION` | 403 | Notification belongs to a different user. |
----
+
+--- 
 
 ## System Invariants
 
@@ -1285,14 +1935,18 @@ Violating any of these is a bug, not a missing feature.
 | INV-02 | COMPLETED or CANCELLED order status cannot change | State machine validates every transition before writing. Terminal states have no outgoing edges. |
 | INV-03 | Payment webhook processed exactly once | `WebhookLog.razorpayPaymentId @unique` — duplicate returns `200` without reprocessing. |
 | INV-04 | BUYER cannot access seller-only routes | `authorize('SELLER')` middleware on all seller routes. Returns `403`. |
-| INV-05 | User sees only their own orders | `orderRepo` checks `buyerId` or `sellerId` matches `req.user.id` before returning data. Admins exempt. |
-| INV-06 | Delivery OTP cleared after verification | `deliveryOtp` set to `null` on COMPLETED. Never stored beyond its use. |
+| INV-05 | User sees only their own orders | `orderRepo` checks `buyerId` or `sellerId` matches `req.user.id`. Admins exempt. |
+| INV-06 | Delivery OTP cleared after verification | `deliveryOtp` set to `null` on COMPLETED. Never stored beyond use. |
 | INV-07 | Phone number is the unique user identifier | `phone @unique` enforced at DB level. Duplicate returns `409 PHONE_EXISTS`. |
 | INV-08 | Seller store name + address must be unique | `@@unique([storeName, storeAddress])` enforced at DB level. |
-| INV-09 | Deal price reverts to original after expiry | Vercel Cron nullifies `dealDiscountPercent` after `dealExpiresAt`. Buyers see original `PriceTier` prices. |
-| INV-10 |Order total must be >= `PlatformConfig.minOrderAmount (₹1000)` | orderService checks before creating Razorpay advance. Returns 400 `BELOW_MINIMUM_ORDER` if violated. | 
-| INV-11 | Order status cannot move from PENDING to CONFIRMED unless advance payment is captured. | Only the Razorpay webhook (payment.captured event), triggers `PENDING → CONFIRMED`. No manual confirmation endpoint. | 
-| INV-12 | Order status cannot move to COMPLETED unless remaining payment is captured AND `OTP` is verified. | State machine requires `READY_FOR_OTP_VERIFICATION` status (set by webhook on payment_link.paid) before verify-otp endpoint is callable.|
-| INV-13 | Refund amount is calculated server-side based on time between cancellation and pickupDeadline. Client never sends refundAmount. Server owns this calculation. `Tiers: 24h+ → 100%, 2-24h → 50%, <2h → 0%.` | Enforcement: cancelOrderService computes from Order.pickupDeadline and DateTime.now(). |
+| INV-09 | Deal price reverts to original after expiry | Vercel Cron nullifies `dealDiscountPercent` after `dealExpiresAt`. |
+| INV-10 | Order total must be >= ₹1000 | `orderService` checks against `PlatformConfig.minOrderAmount` before creating Razorpay advance. |
+| INV-11 | Order cannot confirm without captured advance | Only `payment.captured` webhook triggers `PENDING → CONFIRMED`. No manual endpoint. |
+| INV-12 | Order cannot complete without full payment AND OTP | State machine requires `READY_FOR_OTP_VERIFICATION` (set by webhook) before verify-otp is callable. |
+| INV-13 | Refund calculated server-side only | `cancelOrderService` computes from `Order.pickupDeadline`. Client never sends refundAmount. Tiers: 24h+ → 100%, 2–24h → 50%, <2h → 0%. |
+| INV-14 | Seller cannot see own products in buyer feed | `productRepo` applies `sellerId: { not: req.user.id }` when authenticated user is also a seller. |
+| INV-15 | Review only allowed after COMPLETED order | `reviewService` verifies `order.status === COMPLETED` and `order.buyerId === req.user.id`. |
+| INV-16 | One review per order | `ProductReview.orderId @unique` enforced at DB level. |
+| INV-17 | Bank details masked in all responses | `accountNumber` truncated to last 4 digits in all GET responses. Raw value never leaves server. |
 
 ---

@@ -88,36 +88,8 @@ Use `POST /api/auth/refresh` to get a new pair silently.
   - [POST /api/saved](#post-apisaved)
   - [PATCH /api/saved/:id](#patch-apisavedid)
   - [DELETE /api/saved/:id](#delete-apisavedid)
-- [Cart](#cart)
-  - [GET /api/cart](#get-apicart)
-  - [POST /api/cart](#post-apicart)
-  - [PATCH /api/cart/:itemId](#patch-apicartitemid)
-  - [DELETE /api/cart/:itemId](#delete-apicartitemid)
-  - [DELETE /api/cart](#delete-apicart)
-  - [POST /api/cart/checkout](#post-apicartcheckout)
 - [Upload](#upload)
   - [POST /api/upload/sign](#post-apiuploadsign)
-- [Orders](#orders)
-  - [POST /api/orders](#post-apiorders)
-  - [GET /api/orders](#get-apiorders)
-  - [GET /api/orders/:id](#get-apiordersid)
-  - [PATCH /api/orders/:id/cancel](#patch-apiordersidcancel)
-  - [POST /api/orders/:id/advance](#post-apiordersidadvance)
-  - [POST /api/orders/:id/request-payment](#post-apiordersidrequest-payment)
-  - [POST /api/orders/:id/verify-otp](#post-apiordersidverify-otp)
-- [Reviews](#reviews)
-  - [GET /api/reviews](#get-apireviews)
-  - [POST /api/reviews](#post-apireviews)
-  - [PATCH /api/reviews/:id](#patch-apireviewsid)
-  - [DELETE /api/reviews/:id](#delete-apireviewsid)
-- [Payments](#payments)
-  - [POST /api/webhooks/razorpay](#post-apiwebhooksrazorpay)
-- [Notifications](#notifications)
-  - [GET /api/notifications](#get-apinotifications)
-  - [GET /api/notifications/:id](#get-apinotificationsid)
-  - [PATCH /api/notifications/:id](#patch-apinotificationsid)
-  - [PATCH /api/notifications/read-all](#patch-apinotificationsread-all)
-  - [DELETE /api/notifications/:id](#delete-apinotificationsid)
 - [Cart](#cart)
   - [GET /api/cart](#get-apicart)
   - [POST /api/cart](#post-apicart)
@@ -391,7 +363,7 @@ Body:    {
   bankName:           string   required
   pickupWindows:      array    required — min 1
     [{
-      label:          string   required
+      labelEn:          string   required
       labelHi:        string   required
       startTime:      string   required — "HH:MM"
       endTime:        string   required — "HH:MM"
@@ -1204,6 +1176,8 @@ Body:    {
     }]
   latitude:             number    required — India bounds: 8 to 37
   longitude:            number    required — India bounds: 68 to 98
+  dealDiscountPercent:  number    optional - must be b/w 0 to 100
+  dealExpiresAt:        string    optional - must be in future (ISO DateTime)
 }
 ```
  
@@ -1277,7 +1251,7 @@ Add a deal to a product. Fails if deal already exists — delete first.
 ```
 Auth:    Bearer (SELLER — own product only)
 Body:    {
-  dealDiscountPercent:  number   required — 1 to 100
+  dealDiscountPercent:  number   required — 0 to 100
   dealExpiresAt:        string   required — ISO DateTime, must be in future
 }
 ```
@@ -1316,7 +1290,7 @@ Update deal discount percentage or expiry date.
 ```
 Auth:    Bearer (SELLER — own product only)
 Body:    {
-  dealDiscountPercent?: number   — 1 to 100
+  dealDiscountPercent?: number   — 0 to 100
   dealExpiresAt?:       string   — ISO DateTime, must be in future
 }
 ```
@@ -2098,7 +2072,7 @@ Query params:
         "advanceAmount":  number,
         "pickupDate":     string,
         "pickupWindow": {
-          "label":        string,
+          "labelEn":        string,
           "labelHi":      string,
           "startTime":    string,
           "endTime":      string
@@ -2185,7 +2159,7 @@ Body:    None
       ],
       "pickupWindow": {
         "id":               string,
-        "label":            string,
+        "labelEn":            string,
         "labelHi":          string,
         "startTime":        string,
         "endTime":          string,

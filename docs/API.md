@@ -747,18 +747,18 @@ Body:    None
 ---
 
 ## Pickup Windows
-
-Sellers manage their available pickup times independently.
-At least one active pickup window is required to receive orders.
-
+ 
+Seller manages available pickup times. Minimum 1, maximum 7 active windows.
+`daysActive` uses string abbreviations: `MON | TUE | WED | THU | FRI | SAT | SUN`.
+ 
 ### GET /api/pickup-windows
-
+ 
 Fetch all pickup windows for the authenticated seller.
 ```
 Auth:    Bearer (SELLER)
 Body:    None
 ```
-
+ 
 **Success**
 ```
 200: {
@@ -769,26 +769,25 @@ Body:    None
         "id":         string,
         "labelEn":    string,
         "labelHi":    string,
-        "startTime":  string,
-        "endTime":    string,
-        "daysActive": number[],   — [1,2,3,4,5] Mon=1, Sun=7
-        "deletedAt":  string | null
+        "startTime":  string,   — "HH:MM"
+        "endTime":    string,   — "HH:MM"
+        "daysActive": string[]  — ["MON","TUE","WED",...]
       }
     ]
   }
 }
 ```
-
+ 
 **Errors**
 ```
 401:  UNAUTHENTICATED — "Please login to continue."
 403:  FORBIDDEN       — "Only sellers can access this."
 ```
-
+ 
 ---
-
+ 
 ### POST /api/pickup-windows
-
+ 
 Create a new pickup window.
 ```
 Auth:    Bearer (SELLER)
@@ -797,106 +796,119 @@ Body:    {
   labelHi:    string   required
   startTime:  string   required — "HH:MM" format
   endTime:    string   required — "HH:MM" format, must be after startTime
-  daysActive: number[] required — [1–7], min 1 day
+  daysActive: string[] required — ["MON","TUE",...], min 1
 }
 ```
-
+ 
 **Success**
 ```
 201: {
   "success": true,
-  "data": { "pickupWindow": { id, labelEn, labelHi, startTime, endTime, daysActive } }
+  "message": "Pickup window created.",
+  "data": {
+    "pickupWindow": { "id", "labelEn", "labelHi", "startTime", "endTime", "daysActive" }
+  }
 }
 ```
-
+ 
 **Errors**
 ```
-401:  UNAUTHENTICATED   — "Please login to continue."
-403:  FORBIDDEN         — "Only sellers can access this."
+401:  UNAUTHENTICATED        — "Please login to continue."
+403:  FORBIDDEN              — "Only sellers can manage pickup windows."
+400:  PICKUP_WINDOW_LIMIT    — "Maximum 7 pickup windows allowed."
 422:  VALIDATION_FAILED
 ```
-
+ 
 ---
-
+ 
 ### PATCH /api/pickup-windows/:id
-
-Update an existing pickup window.
+ 
+Update an existing pickup window. Send only fields being changed.
 ```
 Auth:    Bearer (SELLER — own window only)
 Body:    {
   labelEn?:    string
   labelHi?:    string
-  startTime?:  string
-  endTime?:    string
-  daysActive?: number[]
+  startTime?:  string   — "HH:MM"
+  endTime?:    string   — "HH:MM"
+  daysActive?: string[] — min 1 day
 }
 ```
-
+ 
 **Success**
 ```
-200: { "success": true, "data": { "pickupWindow": { } } }
+200: {
+  "success": true,
+  "message": "Pickup window updated.",
+  "data": {
+    "pickupWindow": { "id", "labelEn", "labelHi", "startTime", "endTime", "daysActive" }
+  }
+}
 ```
-
+ 
 **Errors**
 ```
-401:  UNAUTHENTICATED        — "Please login to continue."
-403:  FORBIDDEN              — "You can only edit your own pickup windows."
+401:  UNAUTHENTICATED         — "Please login to continue."
+403:  FORBIDDEN               — "You can only edit your own pickup windows."
 404:  PICKUP_WINDOW_NOT_FOUND — "Pickup window not found."
 422:  VALIDATION_FAILED
 ```
-
+ 
 ---
-
+ 
 ### DELETE /api/pickup-windows/:id
-
-Soft delete a pickup window. Sets deletedAt.
-Cannot delete if it is the seller's only active window.
+ 
+Soft delete a pickup window. Cannot delete if it is the only active window.
 ```
 Auth:    Bearer (SELLER — own window only)
 Body:    None
 ```
-
+ 
 **Success**
 ```
 200: { "success": true, "message": "Pickup window removed." }
 ```
-
+ 
 **Errors**
 ```
-401:  UNAUTHENTICATED        — "Please login to continue."
-403:  FORBIDDEN              — "You can only delete your own pickup windows."
+401:  UNAUTHENTICATED         — "Please login to continue."
+403:  FORBIDDEN               — "You can only delete your own pickup windows."
 404:  PICKUP_WINDOW_NOT_FOUND — "Pickup window not found."
-400:  LAST_PICKUP_WINDOW     — "Cannot delete your only active pickup window."
+400:  LAST_PICKUP_WINDOW      — "Cannot delete your only active pickup window."
 ```
-
 ---
 
 ## Products — Buyer
-
 ### GET /api/products
-
-Fetch nearby products filtered by location and optional criteria.
+ 
+Fetch nearby products with optional search and filters.
+`q` is optional — omitting it returns all products matching other filters.
 Results are paginated. Default sort is by distance (nearest first).
+ 
 ```
 Auth:    None (Public)
 Body:    None
-
+ 
 Query params:
+  q             String   optional — search term (name, nameHi, category)
+                                    omit to browse all products
   lat           Float    required — buyer's current latitude
   lng           Float    required — buyer's current longitude
   radius        Int      optional — km, default: 10, max: 50
-  category      String   optional — see category enum below
+  category      String   optional — GRAINS | DAIRY | OIL | SPICES |
+                                    VEGETABLES | FRUITS | PULSES |
+                                    FLOUR | BEVERAGES | OTHER
   minPrice      Decimal  optional — filter by minimum pricePerUnit
   maxPrice      Decimal  optional — filter by maximum pricePerUnit
   isBranded     Boolean  optional — true | false
-  dealActive    Boolean  optional — true returns only products with
-                                    active deal (dealExpiresAt in future)
+  dealActive    Boolean  optional — true returns only active deals
+  sellerId      String   optional — filter by specific seller
   sortBy        String   optional — price_asc | price_desc | distance
                                     default: distance
   page          Int      optional — default: 1
   limit         Int      optional — default: 20, max: 50
 ```
-
+ 
 **Success**
 ```
 200: {
@@ -930,11 +942,11 @@ Query params:
         "pickupWindows": [
           {
             "id":               string,
-            "label":            string,
+            "labelEn":          string,
             "labelHi":          string,
             "startTime":        string,
             "endTime":          string,
-            "daysActive":       string[]
+            "daysActive":       string[]   — ["MON","TUE","WED",...]
           }
         ],
         "seller": {
@@ -942,6 +954,7 @@ Query params:
           "name":               string,
           "storeName":          string,
           "reliabilityScore":   number,
+          "sellerRating":       number,
           "verificationBadges": string[]
         }
       }
@@ -955,25 +968,26 @@ Query params:
   }
 }
 ```
-
+ 
 **Errors**
 ```
-None
+422:  VALIDATION_FAILED — lat/lng missing or out of India bounds
 ```
-
-> Zero results returns `200` with `products: []` and `total: 0`.
-> Empty results are never a `404`.
-
+ 
+> Zero results returns `200` with `products: []` and `total: 0`. Never `404`.
+> When `q` is provided, search runs against name, nameHi, and category fields.
+> Authenticated sellers: own products excluded via `sellerId: { not: req.user.id }`.
+ 
 ---
-
+ 
 ### GET /api/products/:id
-
+ 
 Fetch full detail of a single product by ID.
 ```
 Auth:    None (Public)
 Body:    None
 ```
-
+ 
 **Success**
 ```
 200: {
@@ -983,31 +997,65 @@ Body:    None
   }
 }
 ```
-
+ 
 **Errors**
 ```
-404:  PRODUCT_NOT_FOUND   — "Product not found or no longer available."
+404:  PRODUCT_NOT_FOUND — "Product not found or no longer available."
 ```
-
+ 
 ---
-
+ 
+### GET /api/products/deals
+ 
+Fetch all products with an active deal, sorted by distance or price.
+```
+Auth:    None (Public)
+Body:    None
+ 
+Query params:
+  lat       Float    required — buyer's current latitude
+  lng       Float    required — buyer's current longitude
+  category  String   optional
+  sortBy    String   optional — price_asc | price_desc | distance (default)
+  page      Int      optional — default: 1
+  limit     Int      optional — default: 20, max: 50
+```
+ 
+**Success**
+```
+200: {
+  "success": true,
+  "data": {
+    "products": [ ],   — same shape as GET /api/products
+                          dealExpiresAt is always set and in future
+    "meta": { "page", "limit", "total", "hasMore" }
+  }
+}
+```
+ 
+**Errors**
+```
+422:  VALIDATION_FAILED — lat/lng missing
+```
+ 
+---
+ 
 ## Products — Seller
-
+ 
 ### GET /api/products/mine
-
+ 
 Fetch all products belonging to the authenticated seller.
-Includes operational fields not exposed to buyers.
 ```
 Auth:    Bearer (SELLER only)
 Body:    None
-
+ 
 Query params:
   page      Int      optional — default: 1
   limit     Int      optional — default: 20
   category  String   optional
   status    String   optional — ACTIVE | DELETED, default: ACTIVE
 ```
-
+ 
 **Success**
 ```
 200: {
@@ -1021,31 +1069,86 @@ Query params:
         "dealActive":   boolean
       }
     ],
-    "meta": {
-      "page":    number,
-      "limit":   number,
-      "total":   number,
-      "hasMore": boolean
+    "meta": { "page", "limit", "total", "hasMore" }
+  }
+}
+```
+ 
+**Errors**
+```
+401:  UNAUTHENTICATED — "Please login to continue."
+403:  FORBIDDEN       — "Only sellers can access this."
+```
+ 
+> Zero products returns `200` with `products: []`. Never `404`.
+ 
+---
+ 
+### GET /api/products/mine/:id
+ 
+Fetch a single product owned by the authenticated seller.
+Includes operational fields (deal dates, order counts) not in buyer view.
+```
+Auth:    Bearer (SELLER — own product only)
+Body:    None
+```
+ 
+**Success**
+```
+200: {
+  "success": true,
+  "data": {
+    "product": {
+      "id":                   string,
+      "name":                 string,
+      "nameHi":               string | null,
+      "description":          string | null,
+      "category":             string,
+      "isBranded":            boolean,
+      "unit":                 string,
+      "unitIncrement":        number,
+      "minOrderQty":          number,
+      "maxOrderQty":          number | null,
+      "priceTiers": [
+        { "minQty": number, "maxQty": number | null, "pricePerUnit": number }
+      ],
+      "available":            number,
+      "imageUrls":            string[],
+      "blurHash":             string | null,
+      "dealDiscountPercent":  number | null,
+      "dealExpiresAt":        string | null,
+      "dealUpdatedAt":        string | null,
+      "totalOrders":          number,
+      "pickupWindows": [
+        {
+          "id":               string,
+          "labelEn":          string,
+          "labelHi":          string,
+          "startTime":        string,
+          "endTime":          string,
+          "daysActive":       string[]
+        }
+      ],
+      "createdAt":            string,
+      "updatedAt":            string
     }
   }
 }
 ```
-
+ 
 **Errors**
 ```
-401:  UNAUTHENTICATED — "Invalid or expired token."
-403:  FORBIDDEN       — "You don't have access to this resource."
+401:  UNAUTHENTICATED   — "Please login to continue."
+403:  FORBIDDEN         — "You can only view your own products."
+404:  PRODUCT_NOT_FOUND — "Product not found."
 ```
-
-> Zero products returns `200` with `products: []`. Never `404`.
-
+ 
 ---
-
+ 
 ### POST /api/products
-
+ 
 Create a new product listing.
-Upload images to Cloudinary first via `POST /api/upload/sign` —
-only the returned URLs are sent here.
+Upload images to Cloudinary first via `POST /api/upload/sign`.
 ```
 Auth:    Bearer (SELLER only)
 Body:    {
@@ -1057,125 +1160,337 @@ Body:    {
                         FRUITS | PULSES | FLOUR | BEVERAGES | OTHER
   isBranded:            boolean   optional, default: false
   imageUrls:            string[]  optional, max 5 Cloudinary URLs
-  blurHash:             string    optional, for hero image (imageUrls[0])
-  available:            number    required, must be > 0
-  minOrderQty:          number    required, must be > 0
+  blurHash:             string    optional — for hero image (imageUrls[0])
+  available:            number    required — must be > 0
+  minOrderQty:          number    required — must be > 0
   maxOrderQty:          number    optional
   unit:                 enum      required
                         KG | GRAM | LITRE | ML | PIECE |
                         DOZEN | QUINTAL | TON | BUNDLE
-  unitIncrement:        number    required, must be > 0
-  priceTiers:           array     required, min 1 entry
+  unitIncrement:        number    required — must be > 0
+  priceTiers:           array     required — min 1 entry
     [{
-      minQty:           number    required, must be > 0
+      minQty:           number    required — must be > 0
       maxQty:           number    optional
-      pricePerUnit:     number    required, must be > 0
+      pricePerUnit:     number    required — must be > 0
     }]
-  latitude:             number    required, India bounds: 8 to 37
-  longitude:            number    required, India bounds: 68 to 98
-  dealDiscountPercent:  number    optional, 0 to 100
-  dealExpiresAt:        DateTime  optional
-                        required if dealDiscountPercent is provided
+  latitude:             number    required — India bounds: 8 to 37
+  longitude:            number    required — India bounds: 68 to 98
 }
 ```
-
+ 
 **Success**
 ```
-201: {
-  "success": true,
-  "data": {
-    "product": { }   — full product object, same shape as GET /api/products
-  }
-}
+201: { "success": true, "data": { "product": { } } }
 ```
-
+ 
 **Errors**
 ```
-401:  UNAUTHENTICATED  — "Please login to continue."
-403:  FORBIDDEN        — "You don't have access to this resource."
-422:  VALIDATION_FAILED — { "fields": [{ "path": "...", "message": "..." }] }
+401:  UNAUTHENTICATED   — "Please login to continue."
+403:  FORBIDDEN         — "Only verified sellers can list products."
+422:  VALIDATION_FAILED
 ```
-
-> `imageUrls[0]` is the hero/cover image shown in the product feed.
-> Client controls display order by controlling array order.
-
+ 
+> imageUrls[0] is the hero/cover image shown in product feed.
+> Seller must be kycStatus = VERIFIED to create products.
+ 
 ---
-
+ 
 ### PATCH /api/products/:id
-
-Update any fields on an existing product.
-Send only the fields being changed — all others remain unchanged.
-
-**Image management via this endpoint:**
-- Add image — append new Cloudinary URL to existing array
-- Delete image — omit that URL from the array
-- Reorder — send reordered array (`imageUrls[0]` = new hero image)
+ 
+Update any fields. Send only fields being changed.
+For images: send full replacement imageUrls array.
 ```
 Auth:    Bearer (SELLER — own product only)
-Body:    {
-  name?:                string
-  nameHi?:              string
-  description?:         string
-  category?:            enum
-  isBranded?:           boolean
-  imageUrls?:           string[]   full replacement array
-  blurHash?:            string     update when hero image changes
-  available?:           number
-  minOrderQty?:         number
-  maxOrderQty?:         number
-  unit?:                enum
-  unitIncrement?:       number
-  priceTiers?:          array
-  dealDiscountPercent?: number
-  dealExpiresAt?:       DateTime
-}
+Body:    Partial — any subset of POST /api/products body
 ```
-
+ 
 **Success**
 ```
-200: {
-  "success": true,
-  "data": {
-    "product": { }
-  }
-}
+200: { "success": true, "data": { "product": { } } }
 ```
-
+ 
 **Errors**
 ```
 401:  UNAUTHENTICATED   — "Please login to continue."
 403:  FORBIDDEN         — "You can only edit your own products."
 404:  PRODUCT_NOT_FOUND — "Product not found."
-422:  VALIDATION_FAILED — { "fields": [{ "path": "...", "message": "..." }] }
+422:  VALIDATION_FAILED
 ```
-
+ 
 ---
-
+ 
 ### DELETE /api/products/:id
-
-Soft delete a product. Sets `deletedAt` timestamp — DB row is retained.
-Product disappears from buyer feed immediately.
-Existing orders referencing this product are unaffected.
+ 
+Soft delete. Sets `deletedAt`. Product disappears from buyer feed immediately.
+Existing CONFIRMED or COMPLETED orders are unaffected.
 ```
 Auth:    Bearer (SELLER — own product only)
 Body:    None
 ```
-
+ 
+**Success**
+```
+200: { "success": true, "message": "Product deleted." }
+```
+ 
+**Errors**
+```
+401:  UNAUTHENTICATED   — "Please login to continue."
+403:  FORBIDDEN         — "You can only delete your own products."
+404:  PRODUCT_NOT_FOUND — "Product not found."
+```
+ 
+---
+ 
+### POST /api/products/:id/deal
+ 
+Add a deal to a product. Fails if deal already exists — delete first.
+```
+Auth:    Bearer (SELLER — own product only)
+Body:    {
+  dealDiscountPercent:  number   required — 1 to 100
+  dealExpiresAt:        string   required — ISO DateTime, must be in future
+}
+```
+ 
 **Success**
 ```
 200: {
   "success": true,
-  "message": "Product deleted."
+  "message": "Deal added successfully.",
+  "data": {
+    "product": {
+      "dealDiscountPercent": number,
+      "dealExpiresAt":       string,
+      "dealUpdatedAt":       string
+    }
+  }
 }
 ```
-
+ 
 **Errors**
 ```
-401:  UNAUTHENTICATED     — "Please login to continue."
-403:  FORBIDDEN           — "You can only delete your own products."
-404:  PRODUCT_NOT_FOUND   — "Product not found."
+401:  UNAUTHENTICATED    — "Please login to continue."
+403:  FORBIDDEN          — "You can only manage your own products."
+404:  PRODUCT_NOT_FOUND  — "Product not found."
+400:  INVALID_EXPIRY_TIME — "Deal expiry must be in the future."
+409:  DEAL_EXISTS        — "A deal already exists on this product.
+                            Delete it before adding a new one."
+422:  VALIDATION_FAILED
 ```
+ 
+---
+ 
+### PATCH /api/products/:id/deal
+ 
+Update deal discount percentage or expiry date.
+```
+Auth:    Bearer (SELLER — own product only)
+Body:    {
+  dealDiscountPercent?: number   — 1 to 100
+  dealExpiresAt?:       string   — ISO DateTime, must be in future
+}
+```
+ 
+**Success**
+```
+200: {
+  "success": true,
+  "message": "Deal updated successfully.",
+  "data": {
+    "product": {
+      "dealDiscountPercent": number,
+      "dealExpiresAt":       string,
+      "dealUpdatedAt":       string
+    }
+  }
+}
+```
+ 
+**Errors**
+```
+401:  UNAUTHENTICATED    — "Please login to continue."
+403:  FORBIDDEN          — "You can only manage your own products."
+404:  PRODUCT_NOT_FOUND  — "Product not found."
+400:  NO_ACTIVE_DEAL     — "No active deal on this product."
+400:  INVALID_EXPIRY_TIME — "Deal expiry must be in the future."
+422:  VALIDATION_FAILED
+```
+ 
+---
+ 
+### DELETE /api/products/:id/deal
+ 
+Remove deal. Price immediately reverts to original PriceTier.
+```
+Auth:    Bearer (SELLER — own product only)
+Body:    None
+```
+ 
+**Success**
+```
+200: { "success": true, "message": "Deal removed. Original pricing restored." }
+```
+ 
+**Errors**
+```
+401:  UNAUTHENTICATED   — "Please login to continue."
+403:  FORBIDDEN         — "You can only manage your own products."
+404:  PRODUCT_NOT_FOUND — "Product not found."
+400:  NO_ACTIVE_DEAL    — "No active deal on this product."
+```
+ 
+---
+ 
+### GET /api/products/deals/mine
+ 
+Fetch all own products that have or had deals.
+```
+Auth:    Bearer (SELLER only)
+Body:    None
+ 
+Query params:
+  status    String   optional — active | expired | all (default: all)
+  page      Int      optional — default: 1
+  limit     Int      optional — default: 20
+```
+ 
+**Success**
+```
+200: {
+  "success": true,
+  "data": {
+    "deals": [
+      {
+        "id":                   string,
+        "name":                 string,
+        "nameHi":               string | null,
+        "category":             string,
+        "available":            number,
+        "imageUrls":            string[],
+        "dealDiscountPercent":  number | null,
+        "dealExpiresAt":        string | null,
+        "dealUpdatedAt":        string | null,
+        "dealActive":           boolean
+      }
+    ],
+    "meta": { "page", "limit", "total", "hasMore" }
+  }
+}
+```
+ 
+**Errors**
+```
+401:  UNAUTHENTICATED — "Please login to continue."
+403:  FORBIDDEN       — "Only sellers can access this."
+```
+ 
+> Zero deals returns `200` with `deals: []`. Never `404`.
+ 
+---
 
+
+## Saved Products
+ 
+One model, two types. Same product can exist in BOTH lists simultaneously.
+`PATCH /api/saved/:id` is not needed — to move between lists, DELETE and POST.
+ 
+### GET /api/saved
+ 
+Fetch saved products. Filter by type to get favourites or saved-for-later.
+```
+Auth:    Bearer (BUYER)
+Body:    None
+ 
+Query params:
+  type    String   optional — FAVOURITE | SAVED_FOR_LATER (omit for all)
+  page    Int      optional — default: 1
+  limit   Int      optional — default: 20
+```
+ 
+**Success**
+```
+200: {
+  "success": true,
+  "data": {
+    "saved": [
+      {
+        "id":      string,   — SavedProduct id (use this for DELETE)
+        "type":    string,   — FAVOURITE | SAVED_FOR_LATER
+        "product": {
+          "id", "name", "nameHi", "category", "isBranded",
+          "unit", "unitIncrement", "minOrderQty", "maxOrderQty",
+          "priceTiers", "available", "imageUrls", "blurHash",
+          "dealDiscountPercent", "dealExpiresAt", "distance_km",
+          "pickupWindows", "seller"
+        }
+      }
+    ],
+    "meta": { "page", "limit", "total", "hasMore" }
+  }
+}
+```
+ 
+**Errors**
+```
+401:  UNAUTHENTICATED — "Please login to continue."
+```
+ 
+> Zero saved items returns `200` with `saved: []`. Never `404`.
+ 
+---
+ 
+### POST /api/saved
+ 
+Save a product to Favourites or Saved For Later.
+```
+Auth:    Bearer (BUYER)
+Body:    {
+  productId:  string   required — cuid
+  type:       enum     required — FAVOURITE | SAVED_FOR_LATER
+}
+```
+ 
+**Success**
+```
+201: {
+  "success": true,
+  "message": "Saved to list.",
+  "data": { "saved": { "id", "type", "productId" } }
+}
+```
+ 
+**Errors**
+```
+401:  UNAUTHENTICATED   — "Please login to continue."
+404:  PRODUCT_NOT_FOUND — "Product not found."
+409:  ALREADY_SAVED     — "Product already in this list."
+422:  VALIDATION_FAILED
+```
+ 
+---
+ 
+### DELETE /api/saved/:id
+ 
+Remove from saved list. `:id` is the SavedProduct id, not the product id.
+```
+Auth:    Bearer (BUYER — own saved item only)
+Body:    None
+```
+ 
+**Success**
+```
+200: { "success": true, "message": "Removed from list." }
+```
+ 
+**Errors**
+```
+401:  UNAUTHENTICATED         — "Please login to continue."
+403:  FORBIDDEN               — "You can only remove your own saved items."
+404:  SAVED_PRODUCT_NOT_FOUND — "Saved item not found."
+```
+ 
 ---
 
 ## Upload

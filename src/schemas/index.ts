@@ -28,7 +28,7 @@ const ProductUnitEnum = z.enum([
   "BUNDLE",
 ]);
 
-// daysActive — uppercase throughout, consistent with API contract
+// daysActive — uppercase, consistent with Prisma schema and API contract
 const DayEnum = z.enum(["MON", "TUE", "WED", "THU", "FRI", "SAT", "SUN"]);
 
 const PriceTierSchema = z
@@ -92,7 +92,6 @@ export const ResetPinSchema = z
       .string()
       .length(4)
       .regex(/^[0-9]{4}$/, "OTP must be exactly 4 digits"),
-    // BUG FIXED: was length(10) + /^[0-9]{10}$/ — PIN is 4 digits not 10
     newPin: z
       .string()
       .length(4)
@@ -102,12 +101,11 @@ export const ResetPinSchema = z
       .length(4)
       .regex(/^[0-9]{4}$/, "PIN must be exactly 4 digits"),
   })
-  .refine(
-    (data) => data.newPin === data.confirmPin, // === not == (strict equality)
-    { message: "confirmPin must match newPin", path: ["confirmPin"] },
-  );
+  .refine((data) => data.newPin === data.confirmPin, {
+    message: "confirmPin must match newPin",
+    path: ["confirmPin"],
+  });
 
-// export const — not "export" alone (syntax error)
 export const RegisterAsSellerSchema = z.object({
   storeName: z.string().min(2).max(100),
   street: z.string().min(2),
@@ -134,11 +132,11 @@ export const RegisterAsSellerSchema = z.object({
   pickupWindows: z
     .array(
       z.object({
-        labelEn: z.string().min(1), // BUG FIXED: was "label" — API uses labelEn
+        labelEn: z.string().min(1),
         labelHi: z.string().min(1),
-        startTime: z.iso.time(), // CORRECT: HH:MM time string — z.iso.time() is right here
+        startTime: z.iso.time(), // HH:MM time string — z.iso.time() correct here
         endTime: z.iso.time(),
-        daysActive: z.array(DayEnum).min(1), // BUG FIXED: was ["Mon","Tue"] — must be ["MON","TUE"]
+        daysActive: z.array(DayEnum).min(1),
       }),
     )
     .min(1, "At least one pickup window is required"),
@@ -150,20 +148,19 @@ export const EditUserProfileSchema = z.object({
   name: z.string().min(2).max(40).optional(),
   street: z.string().optional(),
   line2: z.string().optional(),
-  landmark: z.string().optional(), // BUG FIXED: was "landmark?:" — ? is TS syntax, not Zod
+  landmark: z.string().optional(),
   city: z.string().optional(),
   state: z.string().optional(),
   preferredLang: z.enum(["en", "hi"]).optional(),
 });
 
 export const EditUserAvatarSchema = z.object({
-  profileImageUrl: z.url(), // z.url() — Zod v4 standalone
+  profileImageUrl: z.url(),
   profileImagePublicId: z.string().min(1),
 });
 
 // ── 3. Seller Profile ─────────────────────────────────────────────────────
 
-// BUG FIXED: was "export EditSellerProfileSchema" — missing "const"
 export const EditSellerProfileSchema = z.object({
   storeName: z.string().min(2).max(100).optional(),
   street: z.string().optional(),
@@ -176,7 +173,6 @@ export const EditSellerProfileSchema = z.object({
     .length(6)
     .regex(/^[0-9]{6}$/)
     .optional(),
-  // BUG FIXED: was missing comma after businessType line
   businessType: z
     .enum(["INDIVIDUAL", "PROPRIETORSHIP", "PARTNERSHIP", "PVT_LTD"])
     .optional(),
@@ -191,7 +187,6 @@ export const EditSellerProfileSchema = z.object({
   bankName: z.string().min(2).optional(),
 });
 
-// BUG FIXED: was "export EditSellerProfileImageSchema" + plain JS array literal
 export const EditSellerProfileImageSchema = z.object({
   images: z
     .array(
@@ -206,22 +201,19 @@ export const EditSellerProfileImageSchema = z.object({
 
 // ── 4. Pickup Windows ─────────────────────────────────────────────────────
 
-// BUG FIXED: was "export AddPickupWindowSchema" — missing "const"
-// z.iso.time() is CORRECT here — startTime/endTime are time-of-day strings "HH:MM"
 export const AddPickupWindowSchema = z
   .object({
     labelEn: z.string().min(1),
     labelHi: z.string().min(1),
     startTime: z.iso.time(),
     endTime: z.iso.time(),
-    daysActive: z.array(DayEnum).min(1), // BUG FIXED: was ["Mon"] → ["MON"]
+    daysActive: z.array(DayEnum).min(1),
   })
   .refine((data) => data.startTime < data.endTime, {
     message: "endTime must be after startTime",
     path: ["endTime"],
   });
 
-// BUG FIXED: was "export EditPickupWindowSchema" — missing "const"
 export const EditPickupWindowSchema = z
   .object({
     labelEn: z.string().min(1).optional(),
@@ -270,9 +262,8 @@ export const GetProductsSchema = z
     },
   );
 
-// BUG FIXED: was "export GetProductWithActiveDealSchema" + z.coerce.float() (does not exist)
 export const GetProductsWithActiveDealSchema = z.object({
-  lat: z.coerce.number().min(8).max(37), // BUG FIXED: z.coerce.number() not z.coerce.float()
+  lat: z.coerce.number().min(8).max(37),
   lng: z.coerce.number().min(68).max(98),
   category: ProductCategoryEnum.optional(),
   sortBy: z
@@ -294,7 +285,8 @@ export const GetSellerProductsSchema = z.object({
 
 export const AddProductSchema = z
   .object({
-    name: z.string().min(2).max(200),
+    // nameEn not name — matches Prisma Product.nameEn field
+    nameEn: z.string().min(2).max(200),
     nameHi: z.string().max(200).optional(),
     description: z.string().optional(),
     category: ProductCategoryEnum,
@@ -309,21 +301,9 @@ export const AddProductSchema = z
     priceTiers: z.array(PriceTierSchema).min(1),
     latitude: z.number().min(8).max(37),
     longitude: z.number().min(68).max(98),
-    dealDiscountPercent: z.number().nonnegative().max(100).optional(),
-    dealExpiresAt: z.coerce.date().optional(),
+    // Deal fields removed — deals are created via POST /api/products/:id/deal
   })
   .superRefine((data, ctx) => {
-    if (
-      data.dealDiscountPercent &&
-      data.dealDiscountPercent > 0 &&
-      !data.dealExpiresAt
-    ) {
-      ctx.addIssue({
-        code: "custom",
-        message: "dealExpiresAt is required when dealDiscountPercent is set",
-        path: ["dealExpiresAt"],
-      });
-    }
     if (
       data.imageUrls &&
       data.imageUrls.length > 0 &&
@@ -346,7 +326,7 @@ export const AddProductSchema = z
 
 export const UpdateProductSchema = z
   .object({
-    name: z.string().min(2).max(200).optional(),
+    nameEn: z.string().min(2).max(200).optional(),
     nameHi: z.string().max(200).optional(),
     description: z.string().optional(),
     category: ProductCategoryEnum.optional(),
@@ -359,8 +339,7 @@ export const UpdateProductSchema = z
     unit: ProductUnitEnum.optional(),
     unitIncrement: z.number().positive().optional(),
     priceTiers: z.array(PriceTierSchema).min(1).optional(),
-    dealDiscountPercent: z.number().nonnegative().max(100).optional(),
-    dealExpiresAt: z.coerce.date().optional(),
+    // Deal fields not here — use PATCH /api/products/:id/deal
   })
   .superRefine((data, ctx) => {
     if (
@@ -372,17 +351,6 @@ export const UpdateProductSchema = z
         code: "custom",
         message: "blurHash is required when imageUrls are provided",
         path: ["blurHash"],
-      });
-    }
-    if (
-      data.dealDiscountPercent !== undefined &&
-      data.dealDiscountPercent > 0 &&
-      !data.dealExpiresAt
-    ) {
-      ctx.addIssue({
-        code: "custom",
-        message: "dealExpiresAt is required when dealDiscountPercent is set",
-        path: ["dealExpiresAt"],
       });
     }
     if (
@@ -400,53 +368,43 @@ export const UpdateProductSchema = z
 
 // ── 7. Deals ──────────────────────────────────────────────────────────────
 
-// BUG FIXED: was "export AddDealToProductSchema" + z.iso.time() + inverted refine + extra })
 export const AddDealToProductSchema = z
   .object({
-    dealDiscountPercent: z.number().positive().max(100),
-    dealExpiresAt: z.coerce.date(), // BUG FIXED: iso.time() is time-only; deal needs full datetime
+    discountPercent: z.number().positive().max(100),
+    expiresAt: z.coerce.date(),
   })
-  .refine(
-    (data) => data.dealExpiresAt > new Date(), // BUG FIXED: was <= (inverted — checked past not future)
-    { message: "Deal expiry must be in the future", path: ["dealExpiresAt"] },
-  );
+  .refine((data) => data.expiresAt > new Date(), {
+    message: "Deal expiry must be in the future",
+    path: ["expiresAt"],
+  });
 
-// BUG FIXED: was "export EditDealToProductSchema" + same iso.time() + inverted refine + no undefined guard
 export const EditDealToProductSchema = z
   .object({
-    dealDiscountPercent: z.number().positive().max(100).optional(),
-    dealExpiresAt: z.coerce.date().optional(),
+    discountPercent: z.number().positive().max(100).optional(),
+    expiresAt: z.coerce.date().optional(),
   })
   .refine(
     (data) => {
-      if (!data.dealExpiresAt) return true; // undefined guard — skip if not provided
-      return data.dealExpiresAt > new Date(); // BUG FIXED: was <= (inverted)
+      if (!data.expiresAt) return true;
+      return data.expiresAt > new Date();
     },
-    { message: "Deal expiry must be in the future", path: ["dealExpiresAt"] },
+    { message: "Deal expiry must be in the future", path: ["expiresAt"] },
   );
 
-// BUG FIXED: was "export GetProductWithDealSchema" + missing commas
 export const GetSellerDealsSchema = z.object({
   status: z.enum(["active", "expired", "all"]).optional().default("all"),
   page: z.coerce.number().positive().optional().default(1),
-  limit: z.coerce.number().positive().max(50).optional().default(20), // BUG FIXED: missing comma
+  limit: z.coerce.number().positive().max(50).optional().default(20),
 });
 
 // ── 8. Saved Products ─────────────────────────────────────────────────────
 
-// BUG FIXED: was "export GetSavedProductsSchema" (no const)
-// BUG FIXED: z.enum("FAVORITE",...) → missing [ bracket
-// BUG FIXED: "FAVOURITE" not "FAVORITE" — matches Prisma SaveType enum
-// BUG FIXED: "SAVED_FOR_LATER " trailing space removed
-// BUG FIXED: missing comma on limit line
 export const GetSavedProductsSchema = z.object({
   type: z.enum(["FAVOURITE", "SAVED_FOR_LATER"]).optional(),
   page: z.coerce.number().positive().optional().default(1),
   limit: z.coerce.number().positive().max(50).optional().default(20),
 });
 
-// BUG FIXED: was "export AddTosavedProductsSchema" (no const, wrong casing)
-// BUG FIXED: same enum issues as GetSavedProductsSchema
 export const AddToSavedProductsSchema = z.object({
   productId: z.cuid(),
   type: z.enum(["FAVOURITE", "SAVED_FOR_LATER"]),
@@ -454,28 +412,26 @@ export const AddToSavedProductsSchema = z.object({
 
 // ── 9. Cart ───────────────────────────────────────────────────────────────
 
-// BUG FIXED: was "export AddItemToCartSchema" (no const)
-// BUG FIXED: z.iso.time() for pickupDate — needs full date+time, use z.coerce.date()
-// BUG FIXED: refine was <= (inverted — checked past not future)
 export const AddItemToCartSchema = z
   .object({
     productId: z.cuid(),
     quantity: z.number().positive(),
     pickupWindowId: z.cuid(),
-    pickupDate: z.coerce.date(), // BUG FIXED: iso.time() is time-only; pickup needs full datetime
+    pickupDate: z.coerce.date(),
   })
-  .refine(
-    (data) => data.pickupDate > new Date(), // BUG FIXED: was <= (inverted)
-    { message: "Pickup date must be in the future", path: ["pickupDate"] },
-  );
+  .refine((data) => data.pickupDate > new Date(), {
+    message: "Pickup date must be in the future",
+    path: ["pickupDate"],
+  });
 
-// BUG FIXED: was "export UpdateQuantityCartSchema" (no const)
 export const UpdateCartItemSchema = z.object({
   quantity: z.number().positive(),
 });
 
 // ── 10. Orders ────────────────────────────────────────────────────────────
 
+// POST /api/orders — single-seller direct order (not via cart)
+// Multi-seller checkout uses POST /api/cart/checkout (no body)
 export const CreateOrderSchema = z.object({
   items: z
     .array(
@@ -489,6 +445,9 @@ export const CreateOrderSchema = z.object({
       }),
     )
     .min(1, "At least one item is required"),
+  // cartSessionId links to parent CartSession for multi-seller checkout
+  // When coming from POST /api/cart/checkout this is set server-side
+  // When using POST /api/orders directly this is optional
   cartSessionId: z.cuid().optional(),
 });
 
@@ -525,25 +484,21 @@ export const VerifyOtpSchema = z.object({
 
 // ── 11. Reviews ───────────────────────────────────────────────────────────
 
-// BUG FIXED: was "export GetReviewsSchema" (no const)
-// BUG FIXED: z.coerce.cuid() does not exist — use z.cuid() standalone
-// BUG FIXED: missing comma on limit line
 export const GetReviewsSchema = z.object({
-  productId: z.cuid().optional(), // BUG FIXED: z.coerce.cuid() does not exist in Zod
+  productId: z.cuid().optional(),
   sellerId: z.cuid().optional(),
   page: z.coerce.number().positive().optional().default(1),
   limit: z.coerce.number().positive().max(50).optional().default(20),
 });
 
-// BUG FIXED: was "export AddReviewSchema" (no const)
 export const AddReviewSchema = z.object({
-  orderId: z.cuid(),
+  // subOrderId not orderId — reviews link to SubOrder (ER diagram decision)
+  subOrderId: z.cuid(),
   productId: z.cuid(),
   rating: z.number().min(1).max(5),
   comment: z.string().max(500).optional(),
 });
 
-// BUG FIXED: was "export UpdateReviewSchema" (no const)
 export const UpdateReviewSchema = z.object({
   rating: z.number().min(1).max(5).optional(),
   comment: z.string().max(500).optional(),

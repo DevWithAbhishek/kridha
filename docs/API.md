@@ -1,7 +1,7 @@
 # Kridha — API Contract
 
-> **Version:** 1.0.0-beta
-> **Last updated:** March 2026
+> **Version:** 1.1.0-beta
+> **Last updated:** March 22, 2026
 > **Author:** Abhishek · DevWithAbhishek
 
 ---
@@ -103,13 +103,13 @@ Use `POST /api/auth/refresh` to get a new pair silently.
   - [PATCH /api/reviews/:id](#patch-apireviewsid)
   - [DELETE /api/reviews/:id](#delete-apireviewsid)
 - [Orders](#orders)
-  - [POST /api/orders](#post-apiorders)
-  - [GET /api/orders](#get-apiorders)
-  - [GET /api/orders/:id](#get-apiordersid)
-  - [PATCH /api/orders/:id/cancel](#patch-apiordersidcancel)
-  - [POST /api/orders/:id/advance](#post-apiordersidadvance)
-  - [POST /api/orders/:id/request-payment](#post-apiordersidrequest-payment)
-  - [POST /api/orders/:id/verify-otp](#post-apiordersidverify-otp)
+  - [POST /api/orders](#post-apiorders) — creates Order + SubOrders
+  - [GET /api/orders](#get-apiorders) — lists SubOrders
+  - [GET /api/orders/:id](#get-apiordersid) — SubOrder detail
+  - [PATCH /api/orders/:id/cancel](#patch-apiordersidcancel) — cancel SubOrder
+  - [POST /api/orders/:id/advance](#post-apiordersidadvance) — retry advance on SubOrder
+  - [POST /api/orders/:id/request-payment](#post-apiordersidrequest-payment) — seller requests payment
+  - [POST /api/orders/:id/verify-otp](#post-apiordersidverify-otp) — seller verifies OTP
 - [Payments](#payments)
   - [POST /api/webhooks/razorpay](#post-apiwebhooksrazorpay)
 - [Notifications](#notifications)
@@ -917,12 +917,14 @@ Query params:
     "products": [
       {
         "id":                   string,
-        "name":                 string,
+        "nameEn":               string,
         "nameHi":               string | null,
         "description":          string | null,
         "category":             string,
         "isBranded":            boolean,
-        "unit":                 string,
+        "unit":                 enum      required
+                        KG | GRAM | LITRE | ML | PIECE |
+                        DOZEN | QUINTAL | TON | BUNDLE
         "unitIncrement":        number,
         "minOrderQty":          number,
         "maxOrderQty":          number | null,
@@ -975,8 +977,11 @@ Query params:
 ```
  
 > Zero results returns `200` with `products: []` and `total: 0`. Never `404`.
-> When `q` is provided, search runs against name, nameHi, and category fields.
+> When `q` is provided, search runs against nameEn, nameHi, and category fields.
 > Authenticated sellers: own products excluded via `sellerId: { not: req.user.id }`.
+>
+> `dealDiscountPercent` and `dealExpiresAt` are read from the active `Deal` record
+> via JOIN — not stored directly on Product. `null` means no active deal.
  
 ---
  
@@ -1065,7 +1070,7 @@ Query params:
       {
         ...full product object,
         "available":    number,
-        "totalOrders":  number,
+        "totalOrders":  number,   — computed from OrderItem count, not stored
         "dealActive":   boolean
       }
     ],
@@ -1100,12 +1105,14 @@ Body:    None
   "data": {
     "product": {
       "id":                   string,
-      "name":                 string,
+      "nameEn":               string,
       "nameHi":               string | null,
       "description":          string | null,
       "category":             string,
       "isBranded":            boolean,
-      "unit":                 string,
+      "unit":                 enum      required
+                        KG | GRAM | LITRE | ML | PIECE |
+                        DOZEN | QUINTAL | TON | BUNDLE
       "unitIncrement":        number,
       "minOrderQty":          number,
       "maxOrderQty":          number | null,
@@ -1118,7 +1125,7 @@ Body:    None
       "dealDiscountPercent":  number | null,
       "dealExpiresAt":        string | null,
       "dealUpdatedAt":        string | null,
-      "totalOrders":          number,
+      "totalOrders":          number,   — computed from OrderItem count, not stored
       "pickupWindows": [
         {
           "id":               string,
@@ -1152,7 +1159,7 @@ Upload images to Cloudinary first via `POST /api/upload/sign`.
 ```
 Auth:    Bearer (SELLER only)
 Body:    {
-  name:                 string    required
+  nameEn:               string    required
   nameHi:               string    optional
   description:          string    optional
   category:             enum      required
@@ -1366,7 +1373,7 @@ Query params:
     "deals": [
       {
         "id":                   string,
-        "name":                 string,
+        "nameEn":               string,
         "nameHi":               string | null,
         "category":             string,
         "available":            number,
@@ -1406,7 +1413,7 @@ Auth:    Bearer (BUYER)
 Body:    None
  
 Query params:
-  type    String   optional — FAVORITE | SAVED_FOR_LATER (omit for all)
+  type    String   optional — FAVOURITE | SAVED_FOR_LATER (omit for all)
   page    Int      optional — default: 1
   limit   Int      optional — default: 20
 ```
@@ -1419,7 +1426,7 @@ Query params:
     "saved": [
       {
         "id":      string,   — SavedProduct id (use this for DELETE)
-        "type":    string,   — FAVORITE | SAVED_FOR_LATER
+        "type":    string,   — FAVOURITE | SAVED_FOR_LATER
         "product": {
           "id", "name", "nameHi", "category", "isBranded",
           "unit", "unitIncrement", "minOrderQty", "maxOrderQty",
@@ -1450,7 +1457,7 @@ Save a product to Favorites or Saved For Later.
 Auth:    Bearer (BUYER)
 Body:    {
   productId:  string   required — cuid
-  type:       enum     required — FAVORITE | SAVED_FOR_LATER
+  type:       enum     required — FAVOURITE | SAVED_FOR_LATER
 }
 ```
  
@@ -1582,7 +1589,9 @@ Body:    None
           "category":       string,
           "imageUrls":      string[],
           "blurHash":       string | null,
-          "unit":           string,
+          "unit":           enum      required
+                        KG | GRAM | LITRE | ML | PIECE |
+                        DOZEN | QUINTAL | TON | BUNDLE
           "unitIncrement":  number,
           "available":      number,
           "dealDiscountPercent": number | null,
@@ -1753,10 +1762,10 @@ Body:    None
 201: {
   "success": true,
   "data": {
-    "orderGroupId": string,
-    "orders": [
+    "orderId":   string,   — parent Order id
+    "subOrders": [
       {
-        "id":              string,
+        "id":              string,   — SubOrder id (use for subsequent ops)
         "shortId":         string,
         "sellerId":        string,
         "sellerName":      string,
@@ -1786,6 +1795,7 @@ Body:    None
 ```
 
 > Cart is cleared after successful checkout.
+> Creates one SubOrder per seller. All SubOrders share a parent Order.
 > Stock decremented atomically per seller via prisma.$transaction()
 > with SELECT FOR UPDATE. If any seller's stock check fails,
 > all decrements for that seller are rolled back.
@@ -1850,6 +1860,9 @@ None
 > productId and sellerId are both optional.
 > Omitting both returns all reviews (admin use case).
 > Zero reviews returns `200` with `reviews: []`. Never `404`.
+>
+> Reviews are linked to SubOrders (per-seller transactions), not parent Orders.
+> One review per product per SubOrder — `@@unique([subOrderId, productId])`.
 
 ---
 
@@ -1861,8 +1874,8 @@ the review must be tied to a specific product.
 ```
 Auth:    Bearer (BUYER)
 Body:    {
-  orderId:   string   required — cuid, must be COMPLETED order owned by caller
-  productId: string   required — cuid, must be in that order
+  subOrderId: string  required — cuid, must be COMPLETED SubOrder owned by caller
+  productId:  string  required — cuid, must be in that SubOrder
   rating:    number   required — 1 to 5
   comment:   string   optional — max 500 characters
 }
@@ -1885,7 +1898,7 @@ Body:    {
 403:  FORBIDDEN            — "You can only review orders you placed and completed."
 404:  ORDER_NOT_FOUND      — "Order not found."
 404:  PRODUCT_NOT_FOUND    — "Product not found in this order."
-409:  REVIEW_ALREADY_EXISTS — "You have already reviewed this product for this order."
+409:  REVIEW_ALREADY_EXISTS — "You have already reviewed this product for this SubOrder."
 422:  VALIDATION_FAILED
 ```
 
@@ -1945,6 +1958,10 @@ Body:    None
 
 ## Orders
 
+All order endpoints use `:id` = **SubOrder.id** except `POST /api/orders` which
+returns both `Order.id` (parent) and `SubOrder.id[]` (per-seller transactions).
+Use `SubOrder.id` for cancel, advance, request-payment, and verify-otp.
+
 ### POST /api/orders
 Create a new order. Calculates price server-side from PriceTier — client
 never sends price. Decrements stock atomically inside a single
@@ -1972,40 +1989,47 @@ Body:    {
   "success": true,
   "data": {
     "order": {
-      "id":               string,
-      "shortId":          string,
-      "status":           "PENDING",
-      "totalAmount":      number,
-      "advanceAmount":    number,
-      "remainingAmount":  number,
-      "platformFeeAmount": number,
-      "items": [
-        {
-          "productId":    string,
-          "productName":  string,
-          "quantity":     number,
-          "unitPrice":    number,
-          "subtotal":     number
-        }
-      ],
-      "pickupWindow": {
-        "id":             string,
-        "labelEn":        string,
-        "labelHi":        string,
-        "startTime":      string,
-        "endTime":        string,
-        "date":           string
-      },
-      "seller": {
-        "id":             string,
-        "name":           string,
-        "storeName":      string
-      }
+      "id":              string,   — parent Order id
+      "totalAmount":     number,   — combined across all SubOrders
+      "advanceAmount":   number,   — combined advance across all SubOrders
+      "platformFee":     number
     },
+    "subOrders": [
+      {
+        "id":              string,   — SubOrder id (use for all subsequent ops)
+        "shortId":         string,   — KR-2026-XXXX
+        "status":          "PENDING",
+        "totalAmount":     number,
+        "advanceAmount":   number,
+        "remainingAmount": number,
+        "items": [
+          {
+            "productId":   string,
+            "productName": string,
+            "quantity":    number,
+            "unitPrice":   number,
+            "subtotal":    number
+          }
+        ],
+        "pickupWindow": {
+          "id":            string,
+          "labelEn":       string,
+          "labelHi":       string,
+          "startTime":     string,
+          "endTime":       string,
+          "date":          string
+        },
+        "seller": {
+          "id":            string,
+          "name":          string,
+          "storeName":     string
+        }
+      }
+    ],
     "advance": {
-      "razorpayOrderId":  string,
-      "amount":           number,
-      "currency":         "INR"
+      "razorpayOrderId": string,   — combined Razorpay order for all advances
+      "amount":          number,
+      "currency":        "INR"
     }
   }
 }
@@ -2065,17 +2089,18 @@ Query params:
   "data": {
     "orders": [
       {
-        "id":             string,
-        "shortId":        string,
-        "status":         string,
-        "totalAmount":    number,
-        "advanceAmount":  number,
-        "pickupDate":     string,
+        "id":              string,   — SubOrder id
+        "shortId":         string,
+        "orderId":         string,   — parent Order id
+        "status":          string,
+        "totalAmount":     number,
+        "advanceAmount":   number,
+        "pickupDate":      string,
         "pickupWindow": {
-          "labelEn":        string,
-          "labelHi":      string,
-          "startTime":    string,
-          "endTime":      string
+          "labelEn":       string,
+          "labelHi":       string,
+          "startTime":     string,
+          "endTime":       string
         },
         "items": [
           {
@@ -2084,11 +2109,11 @@ Query params:
           }
         ],
         "seller": {
-          "name":         string,
-          "storeName":    string
+          "name":          string,
+          "storeName":     string
         },
         "buyer": {
-          "name":         string
+          "name":          string
         }
       }
     ],
@@ -2109,18 +2134,21 @@ Query params:
 
 > Zero orders returns `200` with `orders: []` and `total: 0`. Never `404`.
 >
+> Each item in `orders[]` is a SubOrder — the per-seller transaction unit.
 > BUYER response includes `seller` field.
 > SELLER response includes `buyer` field.
-> Both always present in response — client decides which to display.
+> Both always present — client decides which to display.
+> Use `subOrder.id` (not `order.id`) for cancel, advance, request-payment, verify-otp.
 
 ---
 
 ### GET /api/orders/:id
-Fetch full detail of a single order including complete status history.
+Fetch full detail of a SubOrder including complete status history.
+`:id` is the SubOrder id.
 ```
 Auth:    Bearer
-Rule:    req.user.id must equal order.buyerId
-         OR req.user.id must equal order.sellerId
+Rule:    req.user.id must equal subOrder.order.buyerId
+         OR req.user.id must equal subOrder.sellerId
          OR req.user.role must equal ADMIN
          Anyone else receives 403 even with a valid token.
 Body:    None
@@ -2131,16 +2159,15 @@ Body:    None
 200: {
   "success": true,
   "data": {
-    "order": {
-      "id":                 string,
+    "subOrder": {
+      "id":                 string,   — SubOrder id
       "shortId":            string,
+      "orderId":            string,   — parent Order id
       "status":             string,
       "totalAmount":        number,
       "advanceAmount":      number,
       "remainingAmount":    number,
-      "platformFeeAmount":  number,
-      "paymentMode":        string,
-      "advanceStatus":      string,
+      "platformFee":        number,
       "items": [
         {
           "productId":      string,
@@ -2152,14 +2179,15 @@ Body:    None
       ],
       "statusHistory": [
         {
-          "status":         string,
+          "fromStatus":     string | null,
+          "toStatus":       string,
           "timestamp":      string,
           "note":           string | null
         }
       ],
       "pickupWindow": {
         "id":               string,
-        "labelEn":            string,
+        "labelEn":          string,
         "labelHi":          string,
         "startTime":        string,
         "endTime":          string,
@@ -2182,22 +2210,21 @@ Body:    None
 
 **Errors**
 ```
-401:  UNAUTHENTICATED   — "Please login to continue."
-403:  FORBIDDEN       — "You are not authorized to view this order."
-404:  ORDER_NOT_FOUND — "Order not found."
+401:  UNAUTHENTICATED     — "Please login to continue."
+403:  FORBIDDEN           — "You are not authorized to view this order."
+404:  SUBORDER_NOT_FOUND  — "Order not found."
 ```
 
 ---
 
 ### PATCH /api/orders/:id/cancel
-Cancel an order. Refund amount depends on how far the cancellation is
-from the scheduled pickup time.
+Cancel a SubOrder. `:id` is the SubOrder id.
+Refund amount depends on how far the cancellation is from the scheduled pickup time.
 ```
 Auth:    Bearer (BUYER or SELLER)
-Rule:    BUYER  can cancel: PENDING, CONFIRMED
-         SELLER can cancel: PENDING, CONFIRMED
-                            buyer receives 100% refund
-                            seller reliabilityScore −15
+Rule:    SubOrder `:id` must be owned by req.user (buyer or seller)
+         BUYER  can cancel: PENDING, CONFIRMED
+         SELLER can cancel: PENDING, CONFIRMED → buyer receives 100% refund, seller −15 score
          NEITHER can cancel: AWAITING_PAYMENT, READY_FOR_OTP_VERIFICATION,
                              COMPLETED, CANCELLED, DISPUTED
 Body:    {
@@ -2219,11 +2246,11 @@ Seller cancels at any point          → 100% to buyer, seller score −15
 200: {
   "success": true,
   "data": {
-    "order": {
-      "id":       string,
+    "subOrder": {
+      "id":       string,   — SubOrder id
       "status":   "CANCELLED"
     },
-    "refundAmount":  number,
+    "refundAmount":  number,   — server-calculated, never client-supplied (INV-13)
     "refundStatus":  "INITIATED" | "NOT_APPLICABLE"
   }
 }
@@ -2233,7 +2260,7 @@ Seller cancels at any point          → 100% to buyer, seller score −15
 ```
 401:  UNAUTHENTICATED          — "Please login to continue."
 403:  FORBIDDEN                — "You are not authorized to cancel this order."
-404:  ORDER_NOT_FOUND          — "Order not found."
+404:  SUBORDER_NOT_FOUND       — "Order not found."
 409:  INVALID_TRANSITION       — "Order cannot be cancelled in its current status."
                                   meta: { currentStatus, cancellableStatuses }
 ```
@@ -2241,11 +2268,11 @@ Seller cancels at any point          → 100% to buyer, seller score −15
 ---
 
 ### POST /api/orders/:id/advance
-Retry the advance payment flow. Used when buyer closes the Razorpay
-modal before completing payment and needs to reopen it.
+Retry the advance payment flow for a SubOrder. `:id` is the SubOrder id.
+Used when buyer closes the Razorpay modal before completing payment.
 ```
-Auth:    Bearer (BUYER — own order only)
-Rule:    Order status must be PENDING
+Auth:    Bearer (BUYER — own SubOrder only)
+Rule:    SubOrder status must be PENDING
 Body:    None
 ```
 
@@ -2265,7 +2292,7 @@ Body:    None
 ```
 401:  UNAUTHENTICATED     — "Please login to continue."
 403:  FORBIDDEN           — "Only the buyer can retry advance payment."
-404:  ORDER_NOT_FOUND     — "Order not found."
+404:  SUBORDER_NOT_FOUND  — "Order not found."
 409:  INVALID_TRANSITION  — "Advance payment only available for PENDING orders."
 502:  RAZORPAY_ERROR      — "Payment service error. Please retry."
 ```
@@ -2273,12 +2300,12 @@ Body:    None
 ---
 
 ### POST /api/orders/:id/request-payment
-Seller requests a Razorpay payment link for the remaining order amount.
-Called after buyer has arrived, inspected goods, and is ready to pay.
-Transitions order from CONFIRMED → AWAITING_PAYMENT.
+Seller requests a Razorpay payment link for the remaining SubOrder amount.
+`:id` is the SubOrder id. Called after buyer arrives and inspects goods.
+Transitions SubOrder from CONFIRMED → AWAITING_PAYMENT.
 ```
-Auth:    Bearer (SELLER — own order only)
-Rule:    Order status must be CONFIRMED
+Auth:    Bearer (SELLER — own SubOrder only)
+Rule:    SubOrder status must be CONFIRMED
 Body:    None
 ```
 
@@ -2299,24 +2326,23 @@ Body:    None
 ```
 401:  UNAUTHENTICATED     — "Please login to continue."
 403:  FORBIDDEN           — "Only the seller can request payment."
-404:  ORDER_NOT_FOUND     — "Order not found."
+404:  SUBORDER_NOT_FOUND  — "Order not found."
 409:  INVALID_TRANSITION  — "Payment can only be requested for CONFIRMED orders."
 502:  RAZORPAY_ERROR      — "Payment link creation failed. Please retry."
 ```
 
-> **Side effect:** order transitions CONFIRMED → AWAITING_PAYMENT immediately.
+> **Side effect:** SubOrder transitions CONFIRMED → AWAITING_PAYMENT immediately.
 > Payment link expires in 30 minutes. After expiry seller must call this
 > endpoint again to generate a new link.
 
 ---
 
 ### POST /api/orders/:id/verify-otp
-Seller enters the OTP read aloud by the buyer to complete the order.
-OTP is generated when order reaches CONFIRMED status and delivered
-to buyer via in-app notification.
+Seller enters the OTP read aloud by the buyer to complete the SubOrder.
+`:id` is the SubOrder id. OTP is generated on CONFIRMED, delivered to buyer via notification.
 ```
-Auth:    Bearer (SELLER — own order only)
-Rule:    Order status must be READY_FOR_OTP_VERIFICATION
+Auth:    Bearer (SELLER — own SubOrder only)
+Rule:    SubOrder status must be READY_FOR_OTP_VERIFICATION
 Body:    {
   otp:  string   required — 4 digits
 }
@@ -2327,13 +2353,12 @@ Body:    {
 200: {
   "success": true,
   "data": {
-    "order": {
-      "id":            string,
+    "subOrder": {
+      "id":            string,   — SubOrder id
       "shortId":       string,
       "status":        "COMPLETED"
     },
-    "payoutId":        string,   — payout record created for seller
-    "sellerOrderId":   string    — same as order.id (alias for clarity)
+    "payoutId":        string    — Payout record created for this seller
   }
 }
 ```
@@ -2343,17 +2368,17 @@ Body:    {
 400:  INVALID_OTP         — "Invalid or expired OTP."
 401:  UNAUTHENTICATED     — "Please login to continue."
 403:  FORBIDDEN           — "Only the seller can verify OTP."
-404:  ORDER_NOT_FOUND     — "Order not found."
-409:  INVALID_TRANSITION  — "OTP verification only available for orders in
+404:  SUBORDER_NOT_FOUND  — "Order not found."
+409:  INVALID_TRANSITION  — "OTP verification only available for SubOrders in
                              READY_FOR_OTP_VERIFICATION status."
 429:  OTP_ATTEMPTS        — "Too many incorrect attempts."
 ```
 
 > **Side effects on COMPLETED:**
-> - `deliveryOtp` set to `null` immediately — never stored beyond use (INV-06)
-> - Payout record created for seller (amount = total − platformFee)
+> - `SubOrder.deliveryOtp` set to `null` immediately (INV-06)
+> - Payout record created: `amount = totalAmount − platformFee`
 > - In-app notification fires for buyer and seller
-> - After 3 wrong attempts order moves to DISPUTED status
+> - After 3 wrong OTP attempts SubOrder moves to DISPUTED status
 
 ---
 
@@ -2636,6 +2661,7 @@ Body:    None
 | `DEAL_EXISTS` | 409 | A deal already exists on this product. Delete before adding new one. |
 | `INVALID_EXPIRY_TIME` | 400 | Deal expiry must be in the future. |
 | `NOTIFICATION_NOT_FOUND` | 404 | Notification does not exist. |
+| `SUBORDER_NOT_FOUND` | 404 | SubOrder does not exist. |
 
 ---
 
@@ -2654,14 +2680,14 @@ Violating any of these is a bug, not a missing feature.
 | INV-06 | Delivery OTP cleared after verification | `deliveryOtp` set to `null` on COMPLETED. Never stored beyond use. |
 | INV-07 | Phone number is the unique user identifier | `phone @unique` enforced at DB level. Duplicate returns `409 PHONE_EXISTS`. |
 | INV-08 | Seller store name + address must be unique | `@@unique([storeName, storeAddress])` enforced at DB level. |
-| INV-09 | Deal price reverts to original after expiry | Vercel Cron nullifies `dealDiscountPercent` after `dealExpiresAt`. |
+| INV-09 | Deal price reverts to original after expiry | Vercel Cron sets `Deal.status = EXPIRED` after `Deal.expiresAt`. Product response reads active deal via JOIN — expired deal returns no discount. |
 | INV-10 | Order total must be >= ₹1000 | `orderService` checks against `PlatformConfig.minOrderAmount` before creating Razorpay advance. |
 | INV-11 | Order cannot confirm without captured advance | Only `payment.captured` webhook triggers `PENDING → CONFIRMED`. No manual endpoint. |
 | INV-12 | Order cannot complete without full payment AND OTP | State machine requires `READY_FOR_OTP_VERIFICATION` before verify-otp is callable. |
-| INV-13 | Refund calculated server-side only | `cancelOrderService` computes from `Order.pickupDeadline`. Client never sends refundAmount. Tiers: 24h+ → 100%, 2–24h → 50%, <2h → 0%. |
+| INV-13 | Refund calculated server-side only | `cancelOrderService` computes from `SubOrder.pickupDeadline`. Client never sends refundAmount. Tiers: 24h+ → 100%, 2–24h → 50%, <2h → 0%. |
 | INV-14 | Seller cannot see own products in buyer feed | `productRepo` applies `sellerId: { not: req.user.id }` when authenticated user is also a seller. |
-| INV-15 | Review only allowed after COMPLETED order | `reviewService` verifies `order.status === COMPLETED` and `order.buyerId === req.user.id`. |
-| INV-16 | One review per order per product | `ProductReview.orderId + productId @@unique` enforced at DB level. |
+| INV-15 | Review only allowed after COMPLETED SubOrder | `reviewService` verifies `subOrder.status === COMPLETED` and `subOrder.order.buyerId === req.user.id`. |
+| INV-16 | One review per order per product | `Review.@@unique([subOrderId, productId])` enforced at DB level. Reviews link to SubOrder (per-seller transaction), not parent Order. |
 | INV-17 | Bank details masked in all responses | `accountNumber` truncated to last 4 digits. Raw value never leaves server. |
 | INV-18 | Client never sends status transitions | No endpoint accepts `status` in request body. State changes only via service layer and webhooks. |
 | INV-19 | Cart checkout reads from server state only | `POST /api/cart/checkout` takes no body. Server reads CartSession from DB. Client cannot inject items. |

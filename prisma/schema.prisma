@@ -10,3 +10,835 @@ generator client {
 datasource db {
   provider = "postgresql"
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// ENUMS
+// ─────────────────────────────────────────────────────────────────────────────
+
+enum Role {
+  BUYER
+  SELLER
+  ADMIN
+}
+
+enum Language {
+  en
+  hi
+}
+
+enum BusinessType {
+  INDIVIDUAL
+  PROPRIETORSHIP
+  PARTNERSHIP
+  PVT_LTD
+}
+
+enum SellerStatus {
+  PENDING
+  VERIFIED
+  DEACTIVATED
+}
+
+enum KycStatus {
+  PENDING
+  VERIFIED
+  REJECTED
+}
+
+enum ProductCategory {
+  GRAINS
+  DAIRY
+  OIL
+  SPICES
+  VEGETABLES
+  FRUITS
+  PULSES
+  FLOUR
+  BEVERAGES
+  OTHER
+}
+
+enum ProductUnit {
+  KG
+  GRAM
+  LITRE
+  ML
+  PIECE
+  DOZEN
+  QUINTAL
+  TON
+  BUNDLE
+}
+
+enum ProductStatus {
+  ACTIVE
+  DELETED
+}
+
+enum DealStatus {
+  ACTIVE
+  EXPIRED
+}
+
+enum SaveType {
+  FAVOURITE
+  SAVED_FOR_LATER
+}
+
+enum OrderStatus {
+  PENDING
+  CONFIRMED
+  AWAITING_PAYMENT
+  READY_FOR_OTP_VERIFICATION
+  COMPLETED
+  CANCELLED
+  DISPUTED
+}
+
+enum PaymentType {
+  ADVANCE
+  REMAINING
+}
+
+enum PaymentStatus {
+  CREATED
+  PAID
+  PENDING
+  FAILED
+}
+
+enum PayoutStatus {
+  PENDING
+  PROCESSING
+  PAID
+  FAILED
+}
+
+enum NotificationType {
+  ORDER_PLACED
+  ORDER_CONFIRMED
+  READY_FOR_PICKUP
+  AWAITING_PAYMENT
+  ORDER_COMPLETED
+  ORDER_CANCELLED
+  REFUND_INITIATED
+  NO_SHOW_PENALTY
+  DISPUTE_RAISED
+  NEW_ORDER
+  FLAGGED_BUYER
+  DEAL_EXPIRED
+}
+
+enum RefundStatus {
+  INITIATED
+  PROCESSED
+  FAILED
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 1. USER
+// Root entity. Both buyers and sellers are Users.
+// Seller-specific data lives in SellerProfile.
+// ─────────────────────────────────────────────────────────────────────────────
+
+model User {
+  id             String    @id @default(cuid())
+  phone          String    @unique // normalised: +91XXXXXXXXXX
+  pin            String // argon2 hash of 4-digit PIN
+  pinAttempts    Int       @default(0)
+  pinLockedUntil DateTime?
+
+  name     String
+  street   String?
+  line2    String?
+  landmark String?
+  city     String?
+  state    String?
+
+  profileImageUrl      String?
+  profileImagePublicId String?
+  preferredLang        Language @default(hi)
+
+  roles Role[] @default([BUYER])
+
+  // Buyer metrics
+  reliabilityScore Float   @default(100)
+  noShowCount      Int     @default(0)
+  creditBalance    Float   @default(0)
+  isFlagged        Boolean @default(false)
+
+  deletedAt DateTime?
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+
+  // Relations
+  sellerProfile SellerProfile?
+  savedProducts SavedProduct[]
+  cartSessions  CartSession[]
+  buyerOrders   Order[]        @relation("BuyerOrders")
+  reviews       Review[]
+  refreshTokens RefreshToken[]
+  notifications Notification[]
+
+  @@index([phone])
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 2. SELLER PROFILE
+// One-to-one with User. Created when buyer registers as seller.
+// storeName + storeAddress must be globally unique (INV-08).
+// ─────────────────────────────────────────────────────────────────────────────
+
+model SellerProfile {
+  id String @id @default(cuid())
+
+  // One-to-one with User
+  userId String @unique
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  // Store identity
+  storeName   String
+  street      String
+  line2       String?
+  landmark    String?
+  city        String
+  state       String
+  pinCode     String
+  storeImages Json    @default("[]") // [{url: string, publicId: string}]
+
+  // Store coordinates (HQ — may differ from product pickup points)
+  latitude  Float?
+  longitude Float?
+
+  // Business & KYC
+  businessType        BusinessType @default(INDIVIDUAL)
+  gstNumber           String?
+  panNumber           String?
+  kycStatus           KycStatus    @default(PENDING)
+  verificationDocUrls String[]     @default([])
+  profileStatus       SellerStatus @default(PENDING)
+
+  // Bank details (store encrypted — mask accountNumber in responses)
+  accountHolderName String?
+  accountNumber     String? // masked to last 4 digits in all GET responses
+  ifscCode          String?
+  bankName          String?
+  bankVerified      Boolean @default(false)
+
+  // Seller metrics
+  sellerRating      Float @default(0)
+  sellerRatingCount Int   @default(0)
+  reliabilityScore  Float @default(100)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relations
+  pickupWindows PickupWindow[]
+  products      Product[]
+  subOrders     SubOrder[]     @relation("SellerSubOrders")
+  deals         Deal[]
+  reviews       Review[]
+  payouts       Payout[]
+
+  @@unique([storeName, street]) // INV-08 — no duplicate store at same address
+  @@index([city])
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 3. OTP REQUEST
+// Stores OTP for reset-PIN flow. No User FK — phone is the identifier
+// because OTP is requested before the user is authenticated.
+// newPin/confirmPin are NEVER stored here — processed in memory only.
+// ─────────────────────────────────────────────────────────────────────────────
+
+model OtpRequest {
+  id        String    @id @default(cuid())
+  phone     String // matches User.phone
+  otpHash   String // hashed OTP — never store plain text
+  attempts  Int       @default(0) // wrong attempts counter
+  expiresAt DateTime
+  usedAt    DateTime? // null = unused, set on successful use
+  createdAt DateTime  @default(now())
+
+  @@index([phone, expiresAt])
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 4. PRODUCT
+// Latitude/longitude on Product (not SellerProfile) because a seller can
+// have products at different pickup locations. PostGIS uses these for
+// radius queries. distance_km is computed at query time — never stored.
+// ─────────────────────────────────────────────────────────────────────────────
+
+model Product {
+  id String @id @default(cuid())
+
+  // FK to SellerProfile via userId
+  sellerId String
+  seller   SellerProfile @relation(fields: [sellerId], references: [userId], onDelete: Restrict)
+
+  // Identity
+  nameEn      String
+  nameHi      String?
+  description String?
+  category    ProductCategory
+  isBranded   Boolean         @default(false)
+
+  // Unit & Quantity
+  unit             ProductUnit
+  unitIncrement    Float // e.g. 0.5 means sold in 0.5 KG steps
+  minOrderQuantity Float
+  maxOrderQuantity Float?
+
+  // Stock
+  available Float // DB CHECK: available >= 0
+
+  // Images
+  imageUrls String[] @default([])
+  blurHash  String?
+
+  // Location — PostGIS uses these for ST_DWithin radius filter
+  latitude  Float
+  longitude Float
+  city      String
+
+  // Lifecycle
+  productStatus ProductStatus @default(ACTIVE)
+  deletedAt     DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relations
+  priceTiers PriceTier[]
+  deals      Deal[]
+  cartItems  CartItem[]
+  orderItems OrderItem[]
+  reviews    Review[]
+  savedBy    SavedProduct[]
+
+  @@index([city, category, deletedAt])
+  @@index([latitude, longitude])
+  @@index([sellerId, productStatus])
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 5. DEAL
+// Separate entity — enables deal history per product.
+// Only one ACTIVE deal per product at a time (partial unique index).
+// ─────────────────────────────────────────────────────────────────────────────
+
+model Deal {
+  id String @id @default(cuid())
+
+  // FKs
+  productId String
+  product   Product       @relation(fields: [productId], references: [id], onDelete: Cascade)
+  sellerId  String // denormalised for query speed on /deals/mine
+  seller    SellerProfile @relation(fields: [sellerId], references: [userId], onDelete: Cascade)
+
+  discountPercent Float // 0 to 100
+  expiresAt       DateTime
+  status          DealStatus @default(ACTIVE)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  // Partial unique enforced at application layer:
+  // Only one ACTIVE deal per product — checked in service before INSERT
+
+  @@index([productId, status])
+  @@index([sellerId, status])
+  @@index([expiresAt])
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 6. PRICE TIER
+// ─────────────────────────────────────────────────────────────────────────────
+
+model PriceTier {
+  id           String  @id @default(cuid())
+  productId    String
+  product      Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+  minQty       Float
+  maxQty       Float?
+  pricePerUnit Float
+
+  @@index([productId])
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 7. PICKUP WINDOW
+// Belongs to SellerProfile (via userId).
+// daysActive stored as Int[] — Mon=1, Sun=7.
+// Soft deleted via deletedAt. Minimum 1 active window enforced at app layer.
+// ─────────────────────────────────────────────────────────────────────────────
+
+model PickupWindow {
+  id String @id @default(cuid())
+
+  sellerId String
+  seller   SellerProfile @relation(fields: [sellerId], references: [userId], onDelete: Cascade)
+
+  labelEn    String
+  labelHi    String
+  startTime  String // "HH:MM"
+  endTime    String // "HH:MM"
+  daysActive Int[] // [1,2,3,4,5] — Mon=1, Sun=7
+
+  deletedAt DateTime?
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+
+  cartItems CartItem[]
+  subOrders SubOrder[]
+
+  @@index([sellerId, deletedAt])
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 8. SAVED PRODUCT (Favourites + Saved For Later)
+// One model, two types via SaveType enum.
+// @@unique([userId, productId, type]) — same product can be in BOTH lists.
+// ─────────────────────────────────────────────────────────────────────────────
+
+model SavedProduct {
+  id String @id @default(cuid())
+
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  productId String
+  product   Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  type SaveType @default(FAVOURITE)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([userId, productId, type])
+  @@index([userId, type])
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 9. CART SESSION
+// One ACTIVE CartSession per user — enforced at application layer.
+// DB allows one-to-many because old CartSessions are kept after checkout
+// (they become the parent of Orders).
+// Computed fields (totalItems, totalAmount, sellerCount) are NOT stored —
+// calculated from CartItems at query time.
+// ─────────────────────────────────────────────────────────────────────────────
+
+model CartSession {
+  id String @id @default(cuid())
+
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  // Combined advance across all sellers — set at checkout
+  razorpayCartOrderId String?
+  totalAdvance        Float?
+
+  expiresAt DateTime // cart expires after 30 min of inactivity
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  cartItems CartItem[]
+  orders    Order[]
+
+  @@index([userId])
+  @@index([expiresAt])
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 10. CART ITEM
+// pickupWindowId + pickupDate stored here — enforced at add-to-cart stage.
+// unitPrice stored at time of add (snapshot — protects against price changes).
+// ─────────────────────────────────────────────────────────────────────────────
+
+model CartItem {
+  id String @id @default(cuid())
+
+  cartSessionId String
+  cartSession   CartSession @relation(fields: [cartSessionId], references: [id], onDelete: Cascade)
+
+  productId String
+  product   Product @relation(fields: [productId], references: [id], onDelete: Restrict)
+
+  quantity  Float
+  unitPrice Float // snapshot at time of add
+  subTotal  Float // quantity × unitPrice — recomputed on quantity change
+
+  pickupWindowId String
+  pickupWindow   PickupWindow @relation(fields: [pickupWindowId], references: [id], onDelete: Restrict)
+
+  pickupDate DateTime // must be future — validated at Zod + service layer
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([cartSessionId])
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 11. ORDER
+// Parent entity grouping all SubOrders from one checkout.
+// Single-seller checkout: one Order → one SubOrder.
+// Multi-seller checkout: one Order → N SubOrders.
+// Order has no independent status — status is derived from SubOrders.
+// advanceId = Razorpay order ID for the combined advance payment.
+// ─────────────────────────────────────────────────────────────────────────────
+
+model Order {
+  id String @id @default(cuid())
+
+  buyerId String
+  buyer   User   @relation("BuyerOrders", fields: [buyerId], references: [id], onDelete: Restrict)
+
+  cartSessionId String?
+  cartSession   CartSession? @relation(fields: [cartSessionId], references: [id], onDelete: SetNull)
+
+  // Financials (combined across all SubOrders)
+  totalAmount       Float
+  subTotal          Float
+  platformFee       Float
+  advanceAmount     Float // combined advance across all SubOrders
+  razorpayAdvanceId String? // Razorpay order ID for advance
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relations
+  subOrders     SubOrder[]
+  statusHistory OrderStatusHistory[]
+
+  @@index([buyerId, createdAt])
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 12. ORDER ITEM
+// Line item inside a SubOrder. unitPrice is a snapshot — not live product price.
+// onDelete: Restrict on Product — cannot delete product with order history.
+// ─────────────────────────────────────────────────────────────────────────────
+
+model OrderItem {
+  id String @id @default(cuid())
+
+  subOrderId String
+  subOrder   SubOrder @relation(fields: [subOrderId], references: [id], onDelete: Cascade)
+
+  productId String
+  product   Product @relation(fields: [productId], references: [id], onDelete: Restrict)
+
+  quantity  Float
+  unitPrice Float // snapshot at time of order — never changes
+  subTotal  Float // quantity × unitPrice
+
+  @@index([subOrderId])
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 13. ORDER STATUS HISTORY
+// Append-only — never UPDATE, only INSERT. Tracks transitions for both
+// Order (combined advance events) and SubOrder (per-seller lifecycle).
+// orderId: set for order-level events (e.g. combined advance captured)
+// subOrderId: set for SubOrder-level events (e.g. CONFIRMED, COMPLETED)
+// Both can be set simultaneously for events that affect both.
+// ─────────────────────────────────────────────────────────────────────────────
+
+model OrderStatusHistory {
+  id String @id @default(cuid())
+
+  orderId String?
+  order   Order?  @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  subOrderId String?
+  subOrder   SubOrder? @relation(fields: [subOrderId], references: [id], onDelete: Cascade)
+
+  fromStatus  OrderStatus?
+  toStatus    OrderStatus
+  changedById String? // userId of who triggered the change (null = system/webhook)
+  note        String?
+
+  createdAt DateTime @default(now())
+  // No updatedAt — append-only model. Never UPDATE this table.
+
+  @@index([orderId, createdAt])
+  @@index([subOrderId, createdAt])
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 14. SUB ORDER
+// The atomic transaction unit — one per seller per checkout.
+// Has its own status, advance, OTP, payout, and pickup details.
+// pickupDeadline stored (not computed) for cron indexing (INV-13).
+// deliveryOtp cleared to null after verification (INV-06).
+// ─────────────────────────────────────────────────────────────────────────────
+
+model SubOrder {
+  id      String @id @default(cuid())
+  shortId String @unique // KR-2026-XXXX
+
+  orderId String
+  order   Order  @relation(fields: [orderId], references: [id], onDelete: Restrict)
+
+  sellerId String
+  seller   SellerProfile @relation("SellerSubOrders", fields: [sellerId], references: [userId], onDelete: Restrict)
+
+  // Financials
+  totalAmount     Float
+  platformFee     Float
+  advanceAmount   Float
+  remainingAmount Float
+
+  // Razorpay
+  razorpayAdvanceId    String? // Razorpay order ID for this seller's advance
+  paymentLinkId        String?
+  paymentLinkUrl       String?
+  paymentLinkExpiresAt DateTime?
+
+  // Pickup
+  pickupWindowId String?
+  pickupWindow   PickupWindow? @relation(fields: [pickupWindowId], references: [id], onDelete: SetNull)
+  pickupDate     DateTime
+  pickupDeadline DateTime // pickupDate + window.endTime — stored for cron index
+
+  // OTP (INV-06: cleared to null after verification)
+  deliveryOtp   String?
+  otpAttempts   Int       @default(0)
+  otpVerifiedAt DateTime?
+
+  // Status
+  status OrderStatus @default(PENDING)
+
+  // Cancellation
+  cancelledAt        DateTime?
+  cancellationReason String?
+  cancelledBy        String? // userId
+
+  // No-show
+  noShowMarkedAt DateTime?
+  penaltyApplied Boolean   @default(false)
+  penaltyAmount  Float?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relations
+  orderItems    OrderItem[]
+  statusHistory OrderStatusHistory[]
+  payments      Payment[]
+  payout        Payout?
+  refunds       Refund[]
+  reviews       Review[]
+  webhookLogs   WebhookLog[]
+
+  @@index([orderId])
+  @@index([sellerId, status])
+  @@index([pickupDeadline])
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 15. REVIEW
+// One review per product per SubOrder — enforced by @@unique([subOrderId, productId]).
+// Links to SubOrder (not Order) — review is about a specific seller transaction.
+// sellerId denormalised for query speed on GET /reviews?sellerId=X.
+// userId SetNull on user delete — review becomes anonymous, not deleted.
+// ─────────────────────────────────────────────────────────────────────────────
+
+model Review {
+  id String @id @default(cuid())
+
+  subOrderId String
+  subOrder   SubOrder @relation(fields: [subOrderId], references: [id], onDelete: Restrict)
+
+  productId String
+  product   Product @relation(fields: [productId], references: [id], onDelete: Restrict)
+
+  userId String?
+  user   User?   @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  sellerId String // denormalised from product.sellerId at creation
+  seller   SellerProfile @relation(fields: [sellerId], references: [userId], onDelete: Restrict)
+
+  rating  Int // 1 to 5 — DB CHECK enforced at application layer
+  comment String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([subOrderId, productId]) // one review per product per SubOrder (INV-16)
+  @@index([productId, createdAt])
+  @@index([sellerId, createdAt])
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 16. NOTIFICATION
+// Goes to User.id — covers both buyer and seller (seller is also a User).
+// No separate sellerId field — use userId for all notifications.
+// Soft delete via deletedAt — user can dismiss without permanent deletion.
+// ─────────────────────────────────────────────────────────────────────────────
+
+model Notification {
+  id String @id @default(cuid())
+
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  subOrderId String? // optional — links notification to specific SubOrder
+
+  title String // resolved to user's preferredLang at render time
+  body  String
+  type  NotificationType
+  read  Boolean          @default(false)
+
+  deletedAt DateTime?
+  createdAt DateTime  @default(now())
+  // No updatedAt — notifications are immutable content-wise
+
+  @@index([userId, read, createdAt])
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 17. WEBHOOK LOG
+// Idempotency log — razorpayPaymentId @unique prevents double-processing (INV-03).
+// subOrderId added for traceability — find all payments for a SubOrder.
+// No FK to Payout — WebhookLog is a raw event log, not tied to downstream models.
+// ─────────────────────────────────────────────────────────────────────────────
+
+model WebhookLog {
+  id                String    @id @default(cuid())
+  razorpayPaymentId String    @unique // idempotency key (INV-03)
+  eventType         String
+  subOrderId        String? // traceability — which SubOrder this affects
+  subOrder          SubOrder? @relation(fields: [subOrderId], references: [id], onDelete: SetNull)
+  createdAt         DateTime  @default(now())
+  // No updatedAt — append-only
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 18. REFRESH TOKEN
+// tokenHash stores sha256(rawToken) — raw token never stored (INV security).
+// family enables token theft detection — reusing a rotated token invalidates
+// all tokens in the same family (all sessions for that user).
+// ─────────────────────────────────────────────────────────────────────────────
+
+model RefreshToken {
+  id String @id @default(cuid())
+
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  tokenHash  String  @unique // sha256(rawToken) — never store plain token
+  family     String // UUID — shared across rotations of same session
+  deviceInfo String?
+
+  expiresAt DateTime
+  revoked   Boolean  @default(false)
+
+  createdAt DateTime @default(now())
+  // No updatedAt — token is immutable after creation; revoke by setting revoked=true
+
+  @@index([userId])
+  @@index([family])
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 19. PLATFORM CONFIG
+// Singleton row — id is hardcoded as "singleton".
+// Admin changes values here without code deploy or restart.
+// ─────────────────────────────────────────────────────────────────────────────
+
+model PlatformConfig {
+  id String @id @default("singleton")
+
+  platformFeePercent      Float @default(2.0)
+  minPlatformFee          Float @default(10)
+  maxPlatformFee          Float @default(500)
+  minOrderAmountPerSeller Float @default(1000)
+  advanceCapAmount        Float @default(500)
+  advanceMinAmount        Float @default(100)
+  advancePercent          Float @default(5.0)
+  noShowPenalty           Float @default(20)
+  reliabilityDecrement    Int   @default(15)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 20. PAYOUT
+// One payout per SubOrder — subOrderId @unique enforced at DB level.
+// Created when SubOrder reaches COMPLETED via verify-otp.
+// ─────────────────────────────────────────────────────────────────────────────
+
+model Payout {
+  id String @id @default(cuid())
+
+  subOrderId String   @unique
+  subOrder   SubOrder @relation(fields: [subOrderId], references: [id], onDelete: Restrict)
+
+  sellerId String
+  seller   SellerProfile @relation(fields: [sellerId], references: [userId], onDelete: Restrict)
+
+  amount Float
+  status PayoutStatus @default(PENDING)
+
+  processedAt DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  @@index([sellerId, status])
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 21. PAYMENT
+// Tracks each Razorpay payment attempt against a SubOrder.
+// type: ADVANCE (first payment, triggers CONFIRMED) or
+//       REMAINING (second payment, triggers READY_FOR_OTP_VERIFICATION).
+// amount required — you must know how much was paid.
+// ─────────────────────────────────────────────────────────────────────────────
+
+model Payment {
+  id String @id @default(cuid())
+
+  subOrderId String
+  subOrder   SubOrder @relation(fields: [subOrderId], references: [id], onDelete: Restrict)
+
+  type   PaymentType
+  status PaymentStatus @default(CREATED)
+  amount Float // never optional — must know the amount
+
+  razorpayOrderId   String? // Razorpay order ID (used to initiate payment)
+  razorpayPaymentId String? // Razorpay payment ID (set after capture)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([subOrderId])
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 22. REFUND
+// Created when a SubOrder is cancelled with a refund due.
+// Refund amount is calculated server-side only — client never sends this (INV-13).
+// Links to SubOrder (the transaction being refunded).
+// ─────────────────────────────────────────────────────────────────────────────
+
+model Refund {
+  id String @id @default(cuid())
+
+  subOrderId String
+  subOrder   SubOrder @relation(fields: [subOrderId], references: [id], onDelete: Restrict)
+
+  amount           Float // server-calculated from refund tier — never client-supplied
+  reason           String?
+  razorpayRefundId String? // set when Razorpay processes the refund
+  status           RefundStatus @default(INITIATED)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([subOrderId])
+}

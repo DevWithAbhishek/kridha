@@ -890,7 +890,7 @@ Auth:    None (Public)
 Body:    None
  
 Query params:
-  q             String   optional — search term (name, nameHi, category)
+  q             String   optional — search term (nameEn, nameHi, category)
                                     omit to browse all products
   lat           Float    required — buyer's current latitude
   lng           Float    required — buyer's current longitude
@@ -1428,7 +1428,7 @@ Query params:
         "id":      string,   — SavedProduct id (use this for DELETE)
         "type":    string,   — FAVOURITE | SAVED_FOR_LATER
         "product": {
-          "id", "name", "nameHi", "category", "isBranded",
+          "id", "nameEn", "nameHi", "category", "isBranded",
           "unit", "unitIncrement", "minOrderQty", "maxOrderQty",
           "priceTiers", "available", "imageUrls", "blurHash",
           "dealDiscountPercent", "dealExpiresAt", "distance_km",
@@ -1584,7 +1584,7 @@ Body:    None
         {
           "id":             string,   — CartItem id (use for PATCH/DELETE)
           "productId":      string,
-          "productName":    string,
+          "productNameEn":    string,
           "productNameHi":  string | null,
           "category":       string,
           "imageUrls":      string[],
@@ -1790,7 +1790,7 @@ Body:    None
 400:  CART_EMPTY          — "Your cart is empty."
 401:  UNAUTHENTICATED     — "Please login to continue."
 400:  BELOW_MINIMUM_ORDER — meta: { sellerId, minimum: 1000, current: number }
-409:  INSUFFICIENT_STOCK  — meta: { productId, productName, requested, available }
+409:  INSUFFICIENT_STOCK  — meta: { productId, productNameEn, requested, available }
 502:  RAZORPAY_ERROR      — "Payment service error. Please retry."
 ```
 
@@ -1839,7 +1839,7 @@ Query params:
         },
         "product": {
           "id":        string,
-          "name":      string,
+          "nameEn":      string,
           "nameHi":    string | null,
           "imageUrls": string[]
         }
@@ -2005,7 +2005,7 @@ Body:    {
         "items": [
           {
             "productId":   string,
-            "productName": string,
+            "productNameEn": string,
             "quantity":    number,
             "unitPrice":   number,
             "subtotal":    number
@@ -2044,7 +2044,7 @@ Body:    {
 401:  UNAUTHENTICATED   — "Please login to continue."
 403:  FORBIDDEN             — "Only buyers can place orders."
 409:  INSUFFICIENT_STOCK    — "Not enough stock available."
-                               meta: { productId, productName,
+                               meta: { productId, productNameEn,
                                        requested, available }
 409:  DUPLICATE_ORDER       — "An active order already exists for this
                                product and pickup window."
@@ -2104,7 +2104,7 @@ Query params:
         },
         "items": [
           {
-            "productName": string,
+            "productNameEn": string,
             "quantity":    number
           }
         ],
@@ -2171,7 +2171,7 @@ Body:    None
       "items": [
         {
           "productId":      string,
-          "productName":    string,
+          "productNameEn":    string,
           "quantity":       number,
           "unitPrice":      number,
           "subtotal":       number
@@ -2679,7 +2679,7 @@ Violating any of these is a bug, not a missing feature.
 | INV-05 | User sees only their own orders | `orderRepo` checks `buyerId` or `sellerId` matches `req.user.id`. Admins exempt. |
 | INV-06 | Delivery OTP cleared after verification | `deliveryOtp` set to `null` on COMPLETED. Never stored beyond use. |
 | INV-07 | Phone number is the unique user identifier | `phone @unique` enforced at DB level. Duplicate returns `409 PHONE_EXISTS`. |
-| INV-08 | Seller store name + address must be unique | `@@unique([storeName, storeAddress])` enforced at DB level. |
+| INV-08 | Seller store name + address must be unique | `@@unique([storeName, street])` enforced at DB level. |
 | INV-09 | Deal price reverts to original after expiry | Vercel Cron sets `Deal.status = EXPIRED` after `Deal.expiresAt`. Product response reads active deal via JOIN — expired deal returns no discount. |
 | INV-10 | Order total must be >= ₹1000 | `orderService` checks against `PlatformConfig.minOrderAmount` before creating Razorpay advance. |
 | INV-11 | Order cannot confirm without captured advance | Only `payment.captured` webhook triggers `PENDING → CONFIRMED`. No manual endpoint. |

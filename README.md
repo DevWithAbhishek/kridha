@@ -99,8 +99,8 @@ Either party can cancel subject to the refund tier rules.
 | When | Buyer refund | Seller gets |
 |------|-------------|-------------|
 | Before advance paid | No charge | — |
-| 12h+ before pickup | 100% | 0% |
-| 2–12h before pickup | 50% | 50% |
+| 24h+ before pickup | 100% | 0% |
+| 2–24h before pickup | 50% | 50% |
 | <2h or on inspection | 0% | 100% |
 | Seller cancels | 100% | 0% + reliabilityScore −15 |
 
@@ -113,15 +113,25 @@ Violating any of these is a bug, not a missing feature.
 
 | # | Invariant | Enforcement |
 |---|-----------|-------------|
-| INV-01 | `product.available` never goes negative | DB `CHECK (available >= 0)` + `SELECT FOR UPDATE` in `prisma.$transaction()` |
+| INV-01 | `product.available` never goes negative | DB `CHECK (available >= 0)` + `SELECT FOR UPDATE` inside `prisma.$transaction()` |
 | INV-02 | COMPLETED or CANCELLED order status cannot change | State machine validates every transition before writing. Terminal states have no outgoing edges. |
-| INV-03 | Payment webhook processed exactly once | `WebhookLog.razorpayPaymentId @unique` — duplicate webhook returns 200 without reprocessing |
-| INV-04 | BUYER cannot access seller-only routes | `authorize('SELLER')` middleware on all seller routes. Returns 403 FORBIDDEN. |
-| INV-05 | User can only see their own orders | `orderRepo` checks ownership before returning data. Admins exempt. |
-| INV-06 | Delivery OTP cleared after verification | `deliveryOtp` set to `null` on COMPLETED. Never persisted beyond use. |
-| INV-07 | Phone number is the unique user identifier | `phone @unique` on User. Duplicate returns 409 PHONE_EXISTS. |
-| INV-08 | Seller store name + address must be unique | `@@unique([storeName, storeAddress])` enforced at DB level |
-| INV-09 | Deal price reverts after expiry | Vercel Cron nullifies `dealDiscountPercent` after `dealExpiresAt`. Buyers see original PriceTier. |
+| INV-03 | Payment webhook processed exactly once | `WebhookLog.razorpayPaymentId @unique` — duplicate returns `200` without reprocessing. |
+| INV-04 | BUYER cannot access seller-only routes | `authorize('SELLER')` middleware on all seller routes. Returns `403`. |
+| INV-05 | User sees only their own orders | `orderRepo` checks `buyerId` or `sellerId` matches `req.user.id`. Admins exempt. |
+| INV-06 | Delivery OTP cleared after verification | `deliveryOtp` set to `null` on COMPLETED. Never stored beyond use. |
+| INV-07 | Phone number is the unique user identifier | `phone @unique` enforced at DB level. Duplicate returns `409 PHONE_EXISTS`. |
+| INV-08 | Seller store name + address must be unique | `@@unique([storeName, street])` enforced at DB level. |
+| INV-09 | Deal price reverts to original after expiry | Vercel Cron sets `Deal.status = EXPIRED` after `Deal.expiresAt`. Product response reads active deal via JOIN — expired deal returns no discount. |
+| INV-10 | Order total must be >= ₹1000 | `orderService` checks against `PlatformConfig.minOrderAmount` before creating Razorpay advance. |
+| INV-11 | Order cannot confirm without captured advance | Only `payment.captured` webhook triggers `PENDING → CONFIRMED`. No manual endpoint. |
+| INV-12 | Order cannot complete without full payment AND OTP | State machine requires `READY_FOR_OTP_VERIFICATION` before verify-otp is callable. |
+| INV-13 | Refund calculated server-side only | `cancelOrderService` computes from `SubOrder.pickupDeadline`. Client never sends `refundAmount`. Tiers: 24h+ → 100%, 2–24h → 50%, <2h → 0%. |
+| INV-14 | Seller cannot see own products in buyer feed | `productRepo` applies `sellerId: { not: req.user.id }` when authenticated user is also a seller. |
+| INV-15 | Review only allowed after COMPLETED SubOrder | `reviewService` verifies `subOrder.status === COMPLETED` and `subOrder.order.buyerId === req.user.id`. |
+| INV-16 | One review per order per product | `Review.@@unique([subOrderId, productId])` enforced at DB level. Reviews link to SubOrder (per-seller transaction), not parent Order. |
+| INV-17 | Bank details masked in all responses | `accountNumber` truncated to last 4 digits. Raw value never leaves server. |
+| INV-18 | Client never sends status transitions | No endpoint accepts `status` in request body. State changes only via service layer and webhooks. |
+| INV-19 | Cart checkout reads from server state only | `POST /api/cart/checkout` takes no body. Server reads CartSession from DB. Client cannot inject items. |
 
 ---
 
@@ -129,7 +139,7 @@ Violating any of these is a bug, not a missing feature.
 
 | Layer | Technology | Why |
 |-------|-----------|-----|
-| Framework | Next.js 14 (App Router) | Single deployment — frontend + API routes + cron |
+| Framework | Next.js 16 (App Router) | Single deployment — frontend + API routes + cron |
 | Language | TypeScript strict | Catch schema/type mismatches at compile time |
 | Database | PostgreSQL 16 via Neon | PostGIS for radius queries, free tier for zero-cost deploy |
 | ORM | Prisma | Type-safe queries, migration history, `$transaction()` |
@@ -176,7 +186,7 @@ Open [http://localhost:3000](http://localhost:3000)
 ## Built By
 
 **Abhishek** · NIT Allahabad '24 · Backend Engineer
-Open to backend roles · Available from April 2026
+Open to backend roles · Fully Available from 10th April 2026
 
 ## Connect with me
 

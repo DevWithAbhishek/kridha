@@ -1,8 +1,8 @@
 import jwt from "jsonwebtoken";
 import crypto from "node:crypto";
-import { Prisma } from "@/lib/db";
 import { Role } from "@prisma/client";
 import { ERR } from "@/lib/errors";
+import { tokenRepo } from "@/repo/token.repo";
 
 export interface JwtPayload {
   userId: string;
@@ -26,65 +26,39 @@ export const tokenService = {
     if (!family) family = crypto.randomUUID(); // new family per fresh login
     const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
 
-    await Prisma.refreshToken.create({
-      data: {
-        tokenHash: refreshTokenHash,
-        userId,
-        family,
-        expiresAt,
-      },
-    });
+    await tokenRepo.createRefreshToken(userId, family, refreshTokenHash, expiresAt);
 
     return { accessToken, refreshToken: rawRefresh };
   },
 
   async rotateTokens(rawToken: string) {
     const hash = crypto.createHash("sha256").update(rawToken).digest("hex");
-    const stored = await Prisma.refreshToken.findUnique({
-      where: { tokenHash: hash },
-      include: { user: true },
-    });
+    const stored = await tokenRepo.getStoredTokenByTokenHash(hash);
 
     //invalid token (not found, revoked, or expired)
     if (!stored || !stored.revoked || stored.expiresAt < new Date()) {
       //if we found a revoked token, kill the entire family (theft detected)
       if (stored) {
-        await Prisma.refreshToken.updateMany({
-          where: { family: stored.family },
-          data: { revoked: true },
-        });
+        await tokenRepo.revokeRefreshTokenByFamily(stored.family);
       }
-
       throw ERR.REFRESH_TOKEN_INVALID;
     }
-
     //valid token - rotate (revoke old, issue new in same family)
-    await Prisma.refreshToken.update({
-      where: { id: stored.id },
-      data: { revoked: true },
-    });
-
+    await tokenRepo.revokeOldTokenById(stored.id);
     const newTokens = await tokenService.issueTokens(
       stored.userId,
       stored.user.roles,
       stored.family,
     );
-
     return newTokens;
   },
 
   async revokeOne(rawToken: string) {
     const hash = crypto.createHash("sha256").update(rawToken).digest("hex");
-    await Prisma.refreshToken.updateMany({
-      where: { tokenHash: hash },
-      data: { revoked: true },
-    });
+    await tokenRepo.revokeTokenByTokenHash(hash);
   },
 
   async revokeAll(userId: string) {
-    await Prisma.refreshToken.updateMany({
-      where: { userId },
-      data: { revoked: true },
-    });
+    await tokenRepo.revokeTokenByUserId(userId);
   },
 };

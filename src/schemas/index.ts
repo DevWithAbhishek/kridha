@@ -71,10 +71,6 @@ export const RefreshTokenSchema = z.object({
   refreshToken: z.string().min(1, "Refresh token is required"),
 });
 
-export const LogoutSchema = z.object({
-  refreshToken: z.string().min(1, "Refresh token is required"),
-});
-
 export const ResetPinRequestSchema = z.object({
   phone: z
     .string()
@@ -521,7 +517,6 @@ export const GetNotificationsSchema = z.object({
 export type SignupInput = z.infer<typeof SignupSchema>;
 export type LoginInput = z.infer<typeof LoginSchema>;
 export type RefreshTokenInput = z.infer<typeof RefreshTokenSchema>;
-export type LogoutInput = z.infer<typeof LogoutSchema>;
 export type ResetPinRequestInput = z.infer<typeof ResetPinRequestSchema>;
 export type ResetPinInput = z.infer<typeof ResetPinSchema>;
 export type RegisterAsSellerInput = z.infer<typeof RegisterAsSellerSchema>;

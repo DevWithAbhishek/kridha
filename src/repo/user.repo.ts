@@ -1,14 +1,14 @@
-import { Prisma } from "@/lib/db";
+import { prisma } from "@/lib/db";
 
 export const userRepo = {
   async findUserByPhone(phone: string) {
-    return await Prisma.user.findUnique({
+    return await prisma.user.findUnique({
       where: { phone },
     });
   },
 
   async createUser(phone: string, pinHash: string, name: string) {
-    await Prisma.user.create({
+    await prisma.user.create({
       data: {
         phone,
         pin: pinHash,

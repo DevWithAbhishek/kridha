@@ -1,5 +1,5 @@
 import argon2 from "argon2";
-import { Prisma } from "@/lib/db";
+import { prisma } from "@/lib/db";
 import { ERR } from "@/lib/errors";
 import { tokenService } from "@/services/token.service";
 import crypto from "node:crypto";
@@ -54,7 +54,7 @@ export const authService = {
 
   //resetPinRequest
   async resetPinRequest(input: ResetPinRequestInput) {
-    const user = await Prisma.user.findUnique({
+    const user = await prisma.user.findUnique({
       where: { phone: input.phone },
     });
     if (!user) throw ERR.PHONE_NOT_FOUND;
@@ -74,7 +74,7 @@ export const authService = {
 
   //resetPin
   async resetPin(input: ResetPinInput) {
-    const user = await Prisma.user.findUnique({
+    const user = await prisma.user.findUnique({
       where: { phone: input.phone },
     });
     if (!user) throw ERR.PHONE_NOT_FOUND;
@@ -90,17 +90,17 @@ export const authService = {
       parallelism: 1,
     });
 
-    await Prisma.$transaction([
-      Prisma.otpRequest.update({
+    await prisma.$transaction([
+      prisma.otpRequest.update({
         where: { id: record.id },
         data: { usedAt: new Date() },
       }),
-      Prisma.user.update({
+      prisma.user.update({
         where: { phone: input.phone },
         data: { pin: newPinHash},
       }),
       // Revoke all sessions — force re-login after PIN change
-      Prisma.refreshToken.updateMany({
+      prisma.refreshToken.updateMany({
         where: { user: { phone: input.phone } },
         data: { revoked: true },
       }),
@@ -111,12 +111,12 @@ export const authService = {
 
   //registerAsSeller
   async registerAsSeller(userId: string, input: RegisterAsSellerInput) {
-    const existingProfile = await Prisma.sellerProfile.findUnique({
+    const existingProfile = await prisma.sellerProfile.findUnique({
       where: { userId, street: input.street },
     });
     if (!existingProfile) throw ERR.STORE_EXISTS;
 
-    const updatedUser = await Prisma.$transaction(async (tx) => {
+    const updatedUser = await prisma.$transaction(async (tx) => {
       await tx.sellerProfile.create({
         data: {
           userId,

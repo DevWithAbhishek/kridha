@@ -1,8 +1,8 @@
-import { Prisma } from "@/lib/db";
+import { prisma } from "@/lib/db";
 
 export const otpPinRepo = {
   async createResetOtpRequest(phone: string, otpHash: string, expiresAt: Date) {
-    await Prisma.otpRequest.create({
+    await prisma.otpRequest.create({
       data: {
         phone,
         otpHash,
@@ -12,14 +12,14 @@ export const otpPinRepo = {
   },
 
   async findOtpRequest(phone: string, otpHash: string) {
-    return await Prisma.otpRequest.findFirst({
+    return await prisma.otpRequest.findFirst({
       where: { phone, otpHash, expiresAt: { gt: new Date() } },
       orderBy: { createdAt: "desc" },
     });
   },
 
   async updateOtpRequestUsed(id: string) {
-    await Prisma.otpRequest.update({
+    await prisma.otpRequest.update({
       where: { id },
       data: { usedAt: new Date() },
     });

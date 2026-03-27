@@ -1,4 +1,4 @@
-import { Prisma } from "@/lib/db";
+import { prisma } from "@/lib/db";
 
 export const tokenRepo = {
   async createRefreshToken(
@@ -7,7 +7,7 @@ export const tokenRepo = {
     tokenHash: string,
     expiresAt: Date,
   ) {
-    await Prisma.refreshToken.create({
+    await prisma.refreshToken.create({
       data: {
         tokenHash,
         userId,
@@ -18,35 +18,35 @@ export const tokenRepo = {
   },
 
   async revokeRefreshTokenByFamily(family: string) {
-    await Prisma.refreshToken.updateMany({
+    await prisma.refreshToken.updateMany({
       where: { family },
       data: { revoked: true },
     });
   },
 
   async revokeOldTokenById(id: string) {
-    await Prisma.refreshToken.update({
+    await prisma.refreshToken.update({
       where: { id },
       data: { revoked: true },
     });
   },
 
   async revokeTokenByTokenHash(tokenHash: string) {
-    await Prisma.refreshToken.updateMany({
+    await prisma.refreshToken.updateMany({
       where: { tokenHash },
       data: { revoked: true },
     });
   },
 
   async revokeTokenByUserId(userId: string) {
-    await Prisma.refreshToken.updateMany({
+    await prisma.refreshToken.updateMany({
       where: { userId },
       data: { revoked: true },
     });
   },
 
   async getStoredTokenByTokenHash(tokenHash: string) {
-    return await Prisma.refreshToken.findUnique({
+    return await prisma.refreshToken.findUnique({
       where: { tokenHash },
       include: { user: true },
     });

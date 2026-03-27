@@ -90,9 +90,21 @@ export const authService = {
       parallelism: 1,
     });
 
-    await otpPinRepo.updateOtpRequestUsed(record.id);
-    await authRepo.updateUserPin(user.id, newPinHash);
-    await tokenRepo.revokeTokenByUserId(user.id);
+    await Prisma.$transaction([
+      Prisma.otpRequest.update({
+        where: { id: record.id },
+        data: { usedAt: new Date() },
+      }),
+      Prisma.user.update({
+        where: { phone: input.phone },
+        data: { pin: newPinHash},
+      }),
+      // Revoke all sessions — force re-login after PIN change
+      Prisma.refreshToken.updateMany({
+        where: { user: { phone: input.phone } },
+        data: { revoked: true },
+      }),
+    ]);
 
     return { message: "PIN reset successfully. Login to Continue" };
   },

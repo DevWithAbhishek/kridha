@@ -5,7 +5,7 @@ import { GetProductsSchema, AddProductSchema } from "@/schemas";
 import { productService } from "@/services/product.service";
 import { Role } from "@prisma/client";
 
-// GET - public (middleware attaches user if logged in, optional)
+// GET - public (middleware attaches user if logged in, optional), to fetch nearby products, optionally excluding the user’s own products. Parses query params via schema → extracts optional x-user-id from headers → calls listNearby service → returns JSON response or error via handleError.
 export async function GET(req: NextRequest) {
   try {
     const q = GetProductsSchema.parse(
@@ -21,7 +21,7 @@ export async function GET(req: NextRequest) {
   }
 }
 
-// POST - sellers only (middleware already verified token; we check role)
+// POST - sellers only (middleware already verified token; we check role), to create a new product for an authorized seller. Validates seller via requireRole → parses request body with schema → calls productService.create → returns created product with 201 status.
 export async function POST(req: NextRequest) {
   try {
     const user = requireRole(req, Role.SELLER);

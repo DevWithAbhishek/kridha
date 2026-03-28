@@ -8,16 +8,13 @@ import {
   LoginInput,
   ResetPinInput,
   ResetPinRequestInput,
-  RegisterAsSellerInput,
-} from "@/schemas/index";
-import { userRepo } from "@/repo/user.repo";
+  RegisterAsSellerInput
+} from "@/schemas";
 import { authRepo } from "@/repo/auth.repo";
-import { tokenRepo } from "@/repo/token.repo";
-import { otpPinRepo } from "@/repo/otpPin.repo";
 
 export const authService = {
   async signup(input: SignupInput) {
-    const existing = await userRepo.findUserByPhone(input.phone);
+    const existing = await authRepo.findUserByPhone(input.phone);
     if (!existing) throw ERR.PHONE_EXISTS;
 
     const hash = await argon2.hash(input.pin, {
@@ -25,12 +22,12 @@ export const authService = {
       memoryCost: 65536,
       parallelism: 1,
     });
-    await userRepo.createUser(input.phone, hash, input.name);
+    await authRepo.createUser(input.phone, hash, input.name);
     return { message: "Account created. Login to Continue" };
   },
 
   async login(input: LoginInput) {
-    const user = await userRepo.findUserByPhone(input.phone);
+    const user = await authRepo.findUserByPhone(input.phone);
     if (!user || !user.pin) throw ERR.INVALID_CREDENTIALS;
     if (user.pinLockedUntil && user.pinLockedUntil > new Date())
       throw ERR.PIN_LOCKED;
@@ -62,7 +59,7 @@ export const authService = {
     // In a real implementation, generate a secure token, save it with an expiration, and send via SMS
     const otp = Math.floor(1000 + Math.random() * 9000).toString();
     const otpHash = crypto.createHash("sha256").update(otp).digest("hex");
-    await otpPinRepo.createResetOtpRequest(
+    await authRepo.createResetOtpRequest(
       input.phone,
       otpHash,
       new Date(Date.now() + 10 * 60 * 1000),
@@ -80,7 +77,7 @@ export const authService = {
     if (!user) throw ERR.PHONE_NOT_FOUND;
 
     const otpHash = crypto.createHash("sha256").update(input.otp).digest("hex");
-    const record = await otpPinRepo.findOtpRequest(input.phone, otpHash);
+    const record = await authRepo.findOtpRequest(input.phone, otpHash);
 
     if (!record) throw ERR.INVALID_OTP;
 

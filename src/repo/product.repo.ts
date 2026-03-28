@@ -1,6 +1,6 @@
 // src/repos/product.repo.ts
 import { prisma } from "@/lib/db";
-import { PriceTier, Prisma } from "@prisma/client";
+import { PriceTier, Prisma, ProductStatus } from "@prisma/client";
 import type { GetProductsInput } from "@/schemas";
 
 interface ProductRow {
@@ -61,7 +61,7 @@ export const productRepo = {
     const orderClause =
       input.sortBy === "price_asc"
         ? Prisma.sql`ORDER BY min_price ASC NULLS LAST`
-        : Prisma.sql`ORDER BY p.location <-> ST_MakePoint(${input.lng}, ${input.lat})::geography ASC`;
+        : Prisma.sql`ORDER BY p.location <-> ST_MakePoint(${input.lng}, ${input.lat})::geography ASC`; // <->: distance between two points (uses GIST index,very fast sorting)
 
     const baseWhere = Prisma.sql`
       WHERE p."productStatus" = 'ACTIVE'
@@ -103,7 +103,7 @@ export const productRepo = {
       };
     }
 
-    // Fetch relations in parallel — one query each regardless of page size
+    // Fetch relations in parallel — one query each regardless of page size ----> Avoids N+1 problem
     const [tiers, deals] = await Promise.all([
       prisma.priceTier.findMany({ where: { productId: { in: ids } } }),
       prisma.deal.findMany({
@@ -117,6 +117,7 @@ export const productRepo = {
       tierMap.set(t.productId, [...(tierMap.get(t.productId) ?? []), t]);
     for (const d of deals) dealMap.set(d.productId, d);
 
+    // Avoids N+1 problem
     const products: ProductWithRelations[] = rows.map((r) => ({
       ...r,
       priceTiers: tierMap.get(r.id) ?? [],
@@ -155,7 +156,7 @@ export const productRepo = {
     const safePage = Math.max(1, page);
     const safeLimit = Math.min(50, Math.max(1, limit));
     return prisma.product.findMany({
-      where: { sellerId, productStatus: status as any },
+      where: { sellerId, productStatus: status as ProductStatus },
       include: {
         priceTiers: true,
         deals: { where: { status: "ACTIVE" }, take: 1 },

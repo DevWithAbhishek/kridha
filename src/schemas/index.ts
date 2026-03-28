@@ -290,8 +290,8 @@ export const AddProductSchema = z
     imageUrls: z.array(z.url()).max(5).optional(),
     blurHash: z.string().optional(),
     available: z.number().positive(),
-    minOrderQty: z.number().positive(),
-    maxOrderQty: z.number().positive().optional(),
+    minOrderQuantity: z.number().positive(),
+    maxOrderQuantity: z.number().positive().optional(),
     unit: ProductUnitEnum,
     unitIncrement: z.number().positive(),
     priceTiers: z.array(PriceTierSchema).min(1),
@@ -311,7 +311,7 @@ export const AddProductSchema = z
         path: ["blurHash"],
       });
     }
-    if (data.maxOrderQty !== undefined && data.maxOrderQty < data.minOrderQty) {
+    if (data.maxOrderQuantity !== undefined && data.maxOrderQuantity < data.minOrderQuantity) {
       ctx.addIssue({
         code: "custom",
         message: "maxOrderQty must be greater than or equal to minOrderQty",

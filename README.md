@@ -4,7 +4,7 @@
 > micro-suppliers in Tier-2/3 India — starting with Uttar Pradesh.
 
 [![Live](https://img.shields.io/badge/status-building-yellow)](https://github.com/DevWithAbhishek/kridha)
-[![Next.js](https://img.shields.io/badge/Next.js-14-black)](https://nextjs.org)
+[![Next.js](https://img.shields.io/badge/Next.js-16-black)](https://nextjs.org)
 [![TypeScript](https://img.shields.io/badge/TypeScript-strict-blue)](https://typescriptlang.org)
 [![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
@@ -62,7 +62,8 @@ payment via Kridha. Buyer pays. Buyer shares OTP. Order is marked
 - OTP is generated on CONFIRMED, delivered via in-app notification
 - Advance is captured before confirmation
 - OTP verification marks order COMPLETED
-- OTP is set to `null` immediately after use — never stored long-term
+- OTP is set to `null` immediately after use — never stored long-term (INV-06)
+- middleware.ts handles all auth — route handlers never import JWT
 
 ---
 
@@ -116,10 +117,10 @@ Violating any of these is a bug, not a missing feature.
 | INV-01 | `product.available` never goes negative | DB `CHECK (available >= 0)` + `SELECT FOR UPDATE` inside `prisma.$transaction()` |
 | INV-02 | COMPLETED or CANCELLED order status cannot change | State machine validates every transition before writing. Terminal states have no outgoing edges. |
 | INV-03 | Payment webhook processed exactly once | `WebhookLog.razorpayPaymentId @unique` — duplicate returns `200` without reprocessing. |
-| INV-04 | BUYER cannot access seller-only routes | `authorize('SELLER')` middleware on all seller routes. Returns `403`. |
-| INV-05 | User sees only their own orders | `orderRepo` checks `buyerId` or `sellerId` matches `req.user.id`. Admins exempt. |
+| INV-04 | BUYER cannot access seller-only routes | `requireRole(req, Role.SELLER)` reads `x-user-roles` header set by `middleware.ts`. Returns `403`. |
+| INV-05 | User sees only their own orders | `getUser(req)` reads `x-user-id` set by `middleware.ts`. Order query filters by `buyerId` or `sellerId`. Admins exempt. |
 | INV-06 | Delivery OTP cleared after verification | `deliveryOtp` set to `null` on COMPLETED. Never stored beyond use. |
-| INV-07 | Phone number is the unique user identifier | `phone @unique` enforced at DB level. Duplicate returns `409 PHONE_EXISTS`. |
+| INV-07 | Phone number is the unique user identifier | `phone @unique` enforced at DB level. Signup is silent — duplicate phone returns `201` without revealing existence. |
 | INV-08 | Seller store name + address must be unique | `@@unique([storeName, street])` enforced at DB level. |
 | INV-09 | Deal price reverts to original after expiry | Vercel Cron sets `Deal.status = EXPIRED` after `Deal.expiresAt`. Product response reads active deal via JOIN — expired deal returns no discount. |
 | INV-10 | Order total must be >= ₹1000 | `orderService` checks against `PlatformConfig.minOrderAmount` before creating Razorpay advance. |
@@ -141,10 +142,10 @@ Violating any of these is a bug, not a missing feature.
 |-------|-----------|-----|
 | Framework | Next.js 16 (App Router) | Single deployment — frontend + API routes + cron |
 | Language | TypeScript strict | Catch schema/type mismatches at compile time |
-| Database | PostgreSQL 16 via Neon | PostGIS for radius queries, free tier for zero-cost deploy |
+| Database | PostgreSQL 16 via Neon + PostGIS | GIST index on `geography` column for radius search. `pg_trgm` GIN index for product search. Zero-cost serverless. |
 | ORM | Prisma | Type-safe queries, migration history, `$transaction()` |
 | Cache | Upstash Redis | HTTP-based, serverless-compatible, sliding window rate limiting |
-| Auth | Phone + PIN (Argon2)| Hindi-first UX — one-tap for 90% of users |
+| Auth | Phone + PIN · Argon2 · HttpOnly Cookies | Enumeration-safe silent signup. Token family theft detection. No localStorage. |
 | Payments | Razorpay | Advance + payment links + webhook idempotency |
 | Images | Cloudinary | Signed uploads, auto-compression, blurHash placeholders |
 | i18n | next-intl | Hindi-first, English fallback |
@@ -171,9 +172,9 @@ cp .env.example .env
 # 4. Start local DB and Redis
 docker-compose up -d
 
-# 5. Run migrations and seed Lucknow data
-npx prisma migrate dev
-npx prisma db seed
+# 5. Enable PostGIS (Docker PostgreSQL)
+npx prisma migrate dev  # migration adds postgis + pg_trgm + GIST + GIN indexes
+npx prisma db seed      # 3 Lucknow sellers, 10 products, 1 buyer, PlatformConfig
 
 # 6. Start dev server
 npm run dev

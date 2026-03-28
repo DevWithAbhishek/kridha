@@ -1,7 +1,7 @@
 # Kridha — API Contract
 
-> **Version:** 1.1.0-beta
-> **Last updated:** March 22, 2026
+> **Version:** 1.2.0-beta
+> **Last updated:** March 28, 2026
 > **Author:** Abhishek · DevWithAbhishek
 
 ---
@@ -33,13 +33,22 @@ Every response — success or error — follows this shape:
 
 ## Authentication
 
-All protected endpoints require:
-```
-Authorization: Bearer <accessToken>
-```
+Kridha uses **HttpOnly cookies** for token transport. The browser sends them
+automatically — no manual header management needed.
+
+| Cookie | Path | Max-Age | Description |
+|--------|------|---------|-------------|
+| `kridha_access` | `/` | 15 min | JWT access token |
+| `kridha_refresh` | `/api/auth` | 7 days | Refresh token (hash stored in DB) |
+
+Both cookies are `HttpOnly`, `Secure` (production), `SameSite=Strict`.
+JavaScript cannot read them — XSS-proof by design.
 
 Access tokens expire in **15 minutes**.
-Use `POST /api/auth/refresh` to get a new pair silently.
+Call `POST /api/auth/refresh` with no body — browser sends the refresh cookie automatically.
+
+> **Postman / API testing:** Set the cookie manually in Postman.
+> Add `Cookie: kridha_access=<token>` to the request headers.
 
 ---
 
@@ -77,6 +86,7 @@ Use `POST /api/auth/refresh` to get a new pair silently.
   - [GET /api/products/deals](#get-apiproductsdeals)
 - [Products — Seller](#products--seller)
   - [GET /api/products/mine](#get-apiproductsmine)
+  - [GET /api/products/mine/:id](#get-apiproductsmineid)
   - [POST /api/products](#post-apiproducts)
   - [PATCH /api/products/:id](#patch-apiproductsid)
   - [DELETE /api/products/:id](#delete-apiproductsid)
@@ -149,21 +159,25 @@ Body:    {
 **Errors**
 ```
 422:  VALIDATION_FAILED   — "phone must be 10 digits. PIN must be 4 digits."
-409:  PHONE_EXISTS        — "Phone already registered. Please login."
 429:  RATE_LIMITED        — "Too many attempts. Try again in 30 minutes."
 ```
+
+> `PHONE_EXISTS` is never thrown. If the phone is already registered, signup
+> silently returns `201` as if the account were just created.
+> This prevents phone number enumeration — an attacker cannot tell which
+> phones are registered by calling this endpoint.
 
 ---
 
 ### POST /api/auth/login
 
 Authenticate with phone and PIN.
-Returns a JWT access + refresh token pair.
+Tokens are set as HttpOnly cookies — never returned in the response body.
 ```
 Auth:    None
 Body:    {
-  phone:   string   required
-  pin:     string   required
+  phone:   string   required — 10-digit Indian mobile number
+  pin:     string   required — exactly 4 digits
 }
 ```
 
@@ -172,10 +186,15 @@ Body:    {
 200: {
   "success": true,
   "data": {
-    "accessToken":  string   — JWT, expires in 15 minutes
-    "refreshToken": string   — JWT, expires in 7 days
+    "user": {
+      "id":    string,
+      "name":  string,
+      "roles": string[]
+    }
   }
 }
+Set-Cookie: kridha_access=<jwt>; HttpOnly; SameSite=Strict; Path=/; Max-Age=900
+Set-Cookie: kridha_refresh=<token>; HttpOnly; SameSite=Strict; Path=/api/auth; Max-Age=604800
 ```
 
 **Errors**
@@ -191,24 +210,18 @@ Body:    {
 
 ### POST /api/auth/refresh
 
-Exchange a valid refresh token for a new access + refresh token pair.
-Both tokens rotate on every call — the old refresh token is immediately revoked.
+Exchange the refresh cookie for a new token pair. Both tokens rotate on every call.
+The old refresh token is immediately revoked (token family rotation).
 ```
-Auth:    None (refreshToken in body is the credential — no Bearer header)
-Body:    {
-  refreshToken:   string   required
-}
+Auth:    None — kridha_refresh cookie is the credential (sent automatically by browser)
+Body:    None
 ```
 
 **Success**
 ```
-200: {
-  "success": true,
-  "data": {
-    "accessToken":  string   — new JWT, expires in 15 minutes
-    "refreshToken": string   — new JWT, old refresh token revoked
-  }
-}
+200: { "success": true }
+Set-Cookie: kridha_access=<new-jwt>;   HttpOnly; ...; Max-Age=900
+Set-Cookie: kridha_refresh=<new-token>; HttpOnly; ...; Max-Age=604800
 ```
 
 **Errors**
@@ -223,13 +236,11 @@ Body:    {
 
 ### POST /api/auth/logout
 
-Revoke the current device session.
+Revoke the current device session. Browser sends kridha_refresh cookie automatically.
 All other active sessions remain unaffected.
 ```
-Auth:    Bearer
-Body:    {
-  refreshToken:   string   required — revokes this specific session
-}
+Auth:    Cookie (kridha_access — verified by middleware)
+Body:    None — refresh token read from kridha_refresh cookie
 ```
 
 **Success**
@@ -238,11 +249,13 @@ Body:    {
   "success": true,
   "message": "Logged out successfully."
 }
+Set-Cookie: kridha_access=; Max-Age=0   (deleted)
+Set-Cookie: kridha_refresh=; Max-Age=0  (deleted)
 ```
 
 **Errors**
 ```
-401:  REFRESH_TOKEN_INVALID — "Invalid or expired token."
+401:  UNAUTHENTICATED — "Please login to continue."
 ```
 
 ---
@@ -252,7 +265,7 @@ Body:    {
 Revoke all sessions across every device.
 User must re-login on every device after this call.
 ```
-Auth:    Bearer
+Auth:    Cookie (kridha_access — verified by middleware)
 Body:    None
 ```
 
@@ -343,7 +356,7 @@ Upgrade an existing BUYER account to also have SELLER role.
 Creates a SellerProfile with store and bank details.
 Account goes into PENDING verification — seller cannot list products until VERIFIED.
 ```
-Auth:    Bearer (BUYER)
+Auth:    Cookie (kridha_access — BUYER role required)
 Body:    {
   storeName:          string   required
   street:             string   required
@@ -404,7 +417,7 @@ Body:    {
 
 Fetch the authenticated user's profile.
 ```
-Auth:    Bearer (BUYER or SELLER)
+Auth:    Cookie (kridha_access) (BUYER or SELLER)
 Body:    None
 ```
 
@@ -444,7 +457,7 @@ Body:    None
 
 Update profile fields. Send only fields being changed.
 ```
-Auth:    Bearer (BUYER or SELLER)
+Auth:    Cookie (kridha_access) (BUYER or SELLER)
 Body:    {
   name?:          string
   street?:        string
@@ -477,7 +490,7 @@ Body:    {
 Upload or replace profile picture.
 Upload image to Cloudinary first via POST /api/upload/sign — send URL here.
 ```
-Auth:    Bearer (BUYER or SELLER)
+Auth:    Cookie (kridha_access) (BUYER or SELLER)
 Body:    {
   profileImageUrl:      string   required — Cloudinary URL
   profileImagePublicId: string   required — Cloudinary public ID
@@ -505,7 +518,7 @@ Body:    {
 
 Remove profile picture.
 ```
-Auth:    Bearer (BUYER or SELLER)
+Auth:    Cookie (kridha_access) (BUYER or SELLER)
 Body:    None
 ```
 
@@ -530,7 +543,7 @@ Body:    None
 Permanently delete account.
 Blocked if active orders (PENDING, CONFIRMED, AWAITING_PAYMENT) exist.
 ```
-Auth:    Bearer
+Auth:    Cookie (kridha_access)
 Body:    None
 ```
 
@@ -561,7 +574,7 @@ Body:    None
 
 Fetch the authenticated seller's store profile.
 ```
-Auth:    Bearer (SELLER)
+Auth:    Cookie (kridha_access) (SELLER)
 Body:    None
 ```
 
@@ -613,7 +626,7 @@ Body:    None
 Update store profile fields. Send only fields being changed.
 Pickup windows are managed separately via /api/pickup-windows.
 ```
-Auth:    Bearer (SELLER)
+Auth:    Cookie (kridha_access) (SELLER)
 Body:    {
   storeName?:         string
   street?:            string
@@ -659,7 +672,7 @@ Add one or more store images.
 Upload to Cloudinary first via POST /api/upload/sign.
 Maximum 5 store images total.
 ```
-Auth:    Bearer (SELLER)
+Auth:    Cookie (kridha_access) (SELLER)
 Body:    {
   images: [
     {
@@ -695,7 +708,7 @@ Body:    {
 
 Remove a specific store image by its Cloudinary public ID.
 ```
-Auth:    Bearer (SELLER)
+Auth:    Cookie (kridha_access) (SELLER)
 Body:    None
 ```
 
@@ -721,7 +734,7 @@ Body:    None
 Deactivate seller account. User remains as BUYER.
 Blocked if active orders exist on any seller order.
 ```
-Auth:    Bearer (SELLER)
+Auth:    Cookie (kridha_access) (SELLER)
 Body:    None
 ```
 
@@ -755,7 +768,7 @@ Seller manages available pickup times. Minimum 1, maximum 7 active windows.
  
 Fetch all pickup windows for the authenticated seller.
 ```
-Auth:    Bearer (SELLER)
+Auth:    Cookie (kridha_access) (SELLER)
 Body:    None
 ```
  
@@ -790,7 +803,7 @@ Body:    None
  
 Create a new pickup window.
 ```
-Auth:    Bearer (SELLER)
+Auth:    Cookie (kridha_access) (SELLER)
 Body:    {
   labelEn:    string   required
   labelHi:    string   required
@@ -825,7 +838,7 @@ Body:    {
  
 Update an existing pickup window. Send only fields being changed.
 ```
-Auth:    Bearer (SELLER — own window only)
+Auth:    Cookie (kridha_access) (SELLER — own window only)
 Body:    {
   labelEn?:    string
   labelHi?:    string
@@ -860,7 +873,7 @@ Body:    {
  
 Soft delete a pickup window. Cannot delete if it is the only active window.
 ```
-Auth:    Bearer (SELLER — own window only)
+Auth:    Cookie (kridha_access) (SELLER — own window only)
 Body:    None
 ```
  
@@ -940,7 +953,8 @@ Query params:
         "blurHash":             string | null,
         "dealDiscountPercent":  number | null,
         "dealExpiresAt":        string | null,
-        "distance_km":          number,
+        "distance_km":          number,   — computed by PostGIS, never stored
+        "min_price":            number,   — MIN(priceTier.pricePerUnit) for sorting
         "pickupWindows": [
           {
             "id":               string,
@@ -977,11 +991,18 @@ Query params:
 ```
  
 > Zero results returns `200` with `products: []` and `total: 0`. Never `404`.
-> When `q` is provided, search runs against nameEn, nameHi, and category fields.
-> Authenticated sellers: own products excluded via `sellerId: { not: req.user.id }`.
+> When `q` is provided, search runs against nameEn and nameHi using `pg_trgm` GIN index.
+> Authenticated sellers: own products excluded via `AND p."sellerId" != $userId` in SQL.
 >
 > `dealDiscountPercent` and `dealExpiresAt` are read from the active `Deal` record
 > via JOIN — not stored directly on Product. `null` means no active deal.
+>
+> `meta.total` is a real `COUNT(*)` query run in parallel with the data query.
+> It reflects the total matching rows across all pages — not just the current page size.
+>
+> Location-based queries use a `geography` GIST index on `Product.location`
+> (generated column). `sortBy=distance` uses the `<->` KNN operator for index-backed ordering.
+> `sortBy=price_asc` uses `MIN(priceTier.pricePerUnit)` computed via lateral subquery.
  
 ---
  
@@ -1051,7 +1072,7 @@ Query params:
  
 Fetch all products belonging to the authenticated seller.
 ```
-Auth:    Bearer (SELLER only)
+Auth:    Cookie (kridha_access) (SELLER only)
 Body:    None
  
 Query params:
@@ -1094,7 +1115,7 @@ Query params:
 Fetch a single product owned by the authenticated seller.
 Includes operational fields (deal dates, order counts) not in buyer view.
 ```
-Auth:    Bearer (SELLER — own product only)
+Auth:    Cookie (kridha_access) (SELLER — own product only)
 Body:    None
 ```
  
@@ -1125,7 +1146,7 @@ Body:    None
       "dealDiscountPercent":  number | null,
       "dealExpiresAt":        string | null,
       "dealUpdatedAt":        string | null,
-      "totalOrders":          number,   — computed from OrderItem count, not stored
+      "totalOrders":          number,   — computed via Prisma _count, not a stored column   — computed from _count.orderItems, never stored
       "pickupWindows": [
         {
           "id":               string,
@@ -1157,7 +1178,7 @@ Body:    None
 Create a new product listing.
 Upload images to Cloudinary first via `POST /api/upload/sign`.
 ```
-Auth:    Bearer (SELLER only)
+Auth:    Cookie (kridha_access) (SELLER only)
 Body:    {
   nameEn:               string    required
   nameHi:               string    optional
@@ -1210,7 +1231,7 @@ Body:    {
 Update any fields. Send only fields being changed.
 For images: send full replacement imageUrls array.
 ```
-Auth:    Bearer (SELLER — own product only)
+Auth:    Cookie (kridha_access) (SELLER — own product only)
 Body:    Partial — any subset of POST /api/products body
 ```
  
@@ -1234,7 +1255,7 @@ Body:    Partial — any subset of POST /api/products body
 Soft delete. Sets `deletedAt`. Product disappears from buyer feed immediately.
 Existing CONFIRMED or COMPLETED orders are unaffected.
 ```
-Auth:    Bearer (SELLER — own product only)
+Auth:    Cookie (kridha_access) (SELLER — own product only)
 Body:    None
 ```
  
@@ -1256,7 +1277,7 @@ Body:    None
  
 Add a deal to a product. Fails if deal already exists — delete first.
 ```
-Auth:    Bearer (SELLER — own product only)
+Auth:    Cookie (kridha_access) (SELLER — own product only)
 Body:    {
   dealDiscountPercent:  number   required — 0 to 100
   dealExpiresAt:        string   required — ISO DateTime, must be in future
@@ -1295,7 +1316,7 @@ Body:    {
  
 Update deal discount percentage or expiry date.
 ```
-Auth:    Bearer (SELLER — own product only)
+Auth:    Cookie (kridha_access) (SELLER — own product only)
 Body:    {
   dealDiscountPercent?: number   — 0 to 100
   dealExpiresAt?:       string   — ISO DateTime, must be in future
@@ -1333,7 +1354,7 @@ Body:    {
  
 Remove deal. Price immediately reverts to original PriceTier.
 ```
-Auth:    Bearer (SELLER — own product only)
+Auth:    Cookie (kridha_access) (SELLER — own product only)
 Body:    None
 ```
  
@@ -1356,7 +1377,7 @@ Body:    None
  
 Fetch all own products that have or had deals.
 ```
-Auth:    Bearer (SELLER only)
+Auth:    Cookie (kridha_access) (SELLER only)
 Body:    None
  
 Query params:
@@ -1409,7 +1430,7 @@ One model, two types. Same product can exist in BOTH lists simultaneously.
  
 Fetch saved products. Filter by type to get favorites or saved-for-later.
 ```
-Auth:    Bearer (BUYER)
+Auth:    Cookie (kridha_access) (BUYER)
 Body:    None
  
 Query params:
@@ -1454,7 +1475,7 @@ Query params:
  
 Save a product to Favorites or Saved For Later.
 ```
-Auth:    Bearer (BUYER)
+Auth:    Cookie (kridha_access) (BUYER)
 Body:    {
   productId:  string   required — cuid
   type:       enum     required — FAVOURITE | SAVED_FOR_LATER
@@ -1484,7 +1505,7 @@ Body:    {
  
 Remove from saved list. `:id` is the SavedProduct id, not the product id.
 ```
-Auth:    Bearer (BUYER — own saved item only)
+Auth:    Cookie (kridha_access) (BUYER — own saved item only)
 Body:    None
 ```
  
@@ -1511,7 +1532,7 @@ The client uploads directly to Cloudinary using this signature —
 files never pass through Kridha's servers.
 `CLOUDINARY_API_SECRET` never leaves the server.
 ```
-Auth:    Bearer (SELLER only)
+Auth:    Cookie (kridha_access) (SELLER only)
 Body:    None
 ```
 
@@ -1562,13 +1583,14 @@ Auto transform:   f_auto, q_auto, w_1200 applied on upload
 ## Cart
 
 Cart is persisted server-side. One active CartSession per user at a time.
-At checkout, CartItems are converted to SellerOrders — one per seller.
+At checkout, CartItems are converted to SubOrders — one per (seller × pickupWindow × pickupDate) combination.
+Same seller, same window, same date = one SubOrder. Different windows = separate SubOrders.
 
 ### GET /api/cart
 
 Fetch current active cart with all items and summary.
 ```
-Auth:    Bearer (BUYER)
+Auth:    Cookie (kridha_access) (BUYER)
 Body:    None
 ```
 
@@ -1641,7 +1663,7 @@ Add an item to cart. Creates CartSession if none exists.
 `pickupWindowId` and `pickupDate` are required — seller must be reachable
 at the chosen time for checkout to proceed.
 ```
-Auth:    Bearer (BUYER)
+Auth:    Cookie (kridha_access) (BUYER)
 Body:    {
   productId:      string   required — cuid
   quantity:       number   required — positive, multiple of unitIncrement
@@ -1677,7 +1699,7 @@ Body:    {
 
 Update quantity of a cart item.
 ```
-Auth:    Bearer (BUYER — own cart only)
+Auth:    Cookie (kridha_access) (BUYER — own cart only)
 Body:    {
   quantity: number   required — positive, multiple of unitIncrement
 }
@@ -1707,7 +1729,7 @@ Body:    {
 
 Remove a single item from cart.
 ```
-Auth:    Bearer (BUYER — own cart only)
+Auth:    Cookie (kridha_access) (BUYER — own cart only)
 Body:    None
 ```
 
@@ -1729,7 +1751,7 @@ Body:    None
 
 Clear entire cart.
 ```
-Auth:    Bearer (BUYER)
+Auth:    Cookie (kridha_access) (BUYER)
 Body:    None
 ```
 
@@ -1753,7 +1775,7 @@ Body:    None
 Convert entire cart to orders. One SellerOrder created per seller.
 Server reads items from CartSession — no body needed.
 ```
-Auth:    Bearer (BUYER)
+Auth:    Cookie (kridha_access) (BUYER)
 Body:    None
 ```
 
@@ -1872,7 +1894,7 @@ Write a review after a completed order.
 `productId` is required — one order can have multiple products,
 the review must be tied to a specific product.
 ```
-Auth:    Bearer (BUYER)
+Auth:    Cookie (kridha_access) (BUYER)
 Body:    {
   subOrderId: string  required — cuid, must be COMPLETED SubOrder owned by caller
   productId:  string  required — cuid, must be in that SubOrder
@@ -1908,7 +1930,7 @@ Body:    {
 
 Edit own review.
 ```
-Auth:    Bearer (BUYER — own review only)
+Auth:    Cookie (kridha_access) (BUYER — own review only)
 Body:    {
   rating?:  number   — 1 to 5
   comment?: string   — max 500 characters
@@ -1938,7 +1960,7 @@ Body:    {
 
 Delete own review.
 ```
-Auth:    Bearer (BUYER — own review only)
+Auth:    Cookie (kridha_access) (BUYER — own review only)
 Body:    None
 ```
 
@@ -1968,7 +1990,7 @@ never sends price. Decrements stock atomically inside a single
 `prisma.$transaction()` with `SELECT FOR UPDATE`. Creates Razorpay advance
 order in the same flow.
 ```
-Auth:    Bearer (BUYER only)
+Auth:    Cookie (kridha_access) (BUYER only)
 Body:    {
   items: [
     {
@@ -2069,7 +2091,7 @@ List orders for the authenticated user. BUYER sees orders they placed.
 SELLER sees orders placed with them. Same endpoint — role determines
 the DB filter.
 ```
-Auth:    Bearer (BUYER or SELLER)
+Auth:    Cookie (kridha_access) (BUYER or SELLER)
 Body:    None
 
 Query params:
@@ -2146,7 +2168,7 @@ Query params:
 Fetch full detail of a SubOrder including complete status history.
 `:id` is the SubOrder id.
 ```
-Auth:    Bearer
+Auth:    Cookie (kridha_access)
 Rule:    req.user.id must equal subOrder.order.buyerId
          OR req.user.id must equal subOrder.sellerId
          OR req.user.role must equal ADMIN
@@ -2221,7 +2243,7 @@ Body:    None
 Cancel a SubOrder. `:id` is the SubOrder id.
 Refund amount depends on how far the cancellation is from the scheduled pickup time.
 ```
-Auth:    Bearer (BUYER or SELLER)
+Auth:    Cookie (kridha_access) (BUYER or SELLER)
 Rule:    SubOrder `:id` must be owned by req.user (buyer or seller)
          BUYER  can cancel: PENDING, CONFIRMED
          SELLER can cancel: PENDING, CONFIRMED → buyer receives 100% refund, seller −15 score
@@ -2271,7 +2293,7 @@ Seller cancels at any point          → 100% to buyer, seller score −15
 Retry the advance payment flow for a SubOrder. `:id` is the SubOrder id.
 Used when buyer closes the Razorpay modal before completing payment.
 ```
-Auth:    Bearer (BUYER — own SubOrder only)
+Auth:    Cookie (kridha_access) (BUYER — own SubOrder only)
 Rule:    SubOrder status must be PENDING
 Body:    None
 ```
@@ -2304,7 +2326,7 @@ Seller requests a Razorpay payment link for the remaining SubOrder amount.
 `:id` is the SubOrder id. Called after buyer arrives and inspects goods.
 Transitions SubOrder from CONFIRMED → AWAITING_PAYMENT.
 ```
-Auth:    Bearer (SELLER — own SubOrder only)
+Auth:    Cookie (kridha_access) (SELLER — own SubOrder only)
 Rule:    SubOrder status must be CONFIRMED
 Body:    None
 ```
@@ -2341,7 +2363,7 @@ Body:    None
 Seller enters the OTP read aloud by the buyer to complete the SubOrder.
 `:id` is the SubOrder id. OTP is generated on CONFIRMED, delivered to buyer via notification.
 ```
-Auth:    Bearer (SELLER — own SubOrder only)
+Auth:    Cookie (kridha_access) (SELLER — own SubOrder only)
 Rule:    SubOrder status must be READY_FOR_OTP_VERIFICATION
 Body:    {
   otp:  string   required — 4 digits
@@ -2405,20 +2427,20 @@ payment.captured →
   Idempotency check: WebhookLog.razorpayPaymentId @unique
   If already processed → return 200 immediately (no reprocessing)
   If new →
-    order: PENDING → CONFIRMED
-    generate deliveryOtp (4 digits)
-    insert into WebhookLog atomically
-    fire notification → buyer (OTP + pickup window)
-    fire notification → seller (new order confirmed)
+    subOrder: PENDING → CONFIRMED
+    generate SubOrder.deliveryOtp (4 digits)
+    insert WebhookLog atomically with subOrderId for traceability
+    fire notification → buyer (OTP delivered)
+    fire notification → seller (order confirmed)
 
 payment_link.paid →
   Idempotency check: WebhookLog.razorpayPaymentId @unique
   If already processed → return 200 immediately
   If new →
-    order: AWAITING_PAYMENT → READY_FOR_OTP_VERIFICATION
-    insert into WebhookLog atomically
+    subOrder: AWAITING_PAYMENT → READY_FOR_OTP_VERIFICATION
+    insert WebhookLog atomically with subOrderId for traceability
     fire notification → buyer (show OTP to seller)
-    fire notification → seller (buyer is ready, request OTP)
+    fire notification → seller (buyer is ready)
 
 All other events →
   Log event type
@@ -2447,7 +2469,7 @@ Fetch all notifications for the authenticated user.
 Both BUYER and SELLER use the same endpoint —
 results are automatically filtered to `req.user.id`.
 ```
-Auth:    Bearer (BUYER or SELLER)
+Auth:    Cookie (kridha_access) (BUYER or SELLER)
 Body:    None
 
 Query params:
@@ -2471,7 +2493,7 @@ Query params:
         "body":        string,
         "type":        string,
         "read":        boolean,
-        "orderId":     string | null,
+        "subOrderId":  string | null,   — SubOrder this notification relates to
         "createdAt":   string
       }
     ],
@@ -2502,7 +2524,7 @@ Query params:
 ### GET /api/notifications/:id
 Fetch a single notification by ID.
 ```
-Auth:    Bearer (BUYER or SELLER)
+Auth:    Cookie (kridha_access) (BUYER or SELLER)
 Rule:    req.user.id must equal notification.userId
          Anyone else receives 403 even with a valid token.
 Body:    None
@@ -2538,7 +2560,7 @@ Body:    None
 ### PATCH /api/notifications/:id
 Mark a single notification as read.
 ```
-Auth:    Bearer (BUYER or SELLER)
+Auth:    Cookie (kridha_access) (BUYER or SELLER)
 Rule:    req.user.id must equal notification.userId
 Body:    None
 ```
@@ -2571,7 +2593,7 @@ Body:    None
 ### PATCH /api/notifications/read-all
 Mark all notifications as read for the authenticated user.
 ```
-Auth:    Bearer (BUYER or SELLER)
+Auth:    Cookie (kridha_access) (BUYER or SELLER)
 Body:    None
 ```
 
@@ -2599,7 +2621,7 @@ Body:    None
 Permanently delete a notification.
 Hard delete — row is removed from DB.
 ```
-Auth:    Bearer (BUYER or SELLER)
+Auth:    Cookie (kridha_access) (BUYER or SELLER)
 Rule:    req.user.id must equal notification.userId
 Body:    None
 ```
@@ -2629,7 +2651,6 @@ Body:    None
 | `UNAUTHENTICATED` | 401 | Missing, invalid, or expired Bearer token. |
 | `FORBIDDEN` | 403 | Valid token but wrong role or not resource owner. |
 | `RATE_LIMITED` | 429 | Too many requests to this endpoint. |
-| `PHONE_EXISTS` | 409 | Phone already registered on signup. |
 | `PHONE_NOT_FOUND` | 404 | No account found with this phone number. |
 | `INVALID_CREDENTIALS` | 401 | Wrong phone or PIN on login. |
 | `PIN_LOCKED` | 429 | Too many consecutive failed login attempts. |
@@ -2675,17 +2696,17 @@ Violating any of these is a bug, not a missing feature.
 | INV-01 | `product.available` never goes negative | DB `CHECK (available >= 0)` + `SELECT FOR UPDATE` inside `prisma.$transaction()` |
 | INV-02 | COMPLETED or CANCELLED order status cannot change | State machine validates every transition before writing. Terminal states have no outgoing edges. |
 | INV-03 | Payment webhook processed exactly once | `WebhookLog.razorpayPaymentId @unique` — duplicate returns `200` without reprocessing. |
-| INV-04 | BUYER cannot access seller-only routes | `authorize('SELLER')` middleware on all seller routes. Returns `403`. |
-| INV-05 | User sees only their own orders | `orderRepo` checks `buyerId` or `sellerId` matches `req.user.id`. Admins exempt. |
+| INV-04 | BUYER cannot access seller-only routes | `requireRole(req, Role.SELLER)` in route handler reads `x-user-roles` header set by `middleware.ts`. Returns `403`. |
+| INV-05 | User sees only their own orders | `getUser(req)` reads `x-user-id` header set by `middleware.ts`. Order query filters by `buyerId` or `sellerId` = `userId`. Admins exempt. |
 | INV-06 | Delivery OTP cleared after verification | `deliveryOtp` set to `null` on COMPLETED. Never stored beyond use. |
-| INV-07 | Phone number is the unique user identifier | `phone @unique` enforced at DB level. Duplicate returns `409 PHONE_EXISTS`. |
+| INV-07 | Phone number is the unique user identifier | `phone @unique` enforced at DB level. Signup is silent — duplicate phone returns `201` without revealing existence (enumeration prevention). |
 | INV-08 | Seller store name + address must be unique | `@@unique([storeName, street])` enforced at DB level. |
 | INV-09 | Deal price reverts to original after expiry | Vercel Cron sets `Deal.status = EXPIRED` after `Deal.expiresAt`. Product response reads active deal via JOIN — expired deal returns no discount. |
 | INV-10 | Order total must be >= ₹1000 | `orderService` checks against `PlatformConfig.minOrderAmount` before creating Razorpay advance. |
 | INV-11 | Order cannot confirm without captured advance | Only `payment.captured` webhook triggers `PENDING → CONFIRMED`. No manual endpoint. |
 | INV-12 | Order cannot complete without full payment AND OTP | State machine requires `READY_FOR_OTP_VERIFICATION` before verify-otp is callable. |
 | INV-13 | Refund calculated server-side only | `cancelOrderService` computes from `SubOrder.pickupDeadline`. Client never sends refundAmount. Tiers: 24h+ → 100%, 2–24h → 50%, <2h → 0%. |
-| INV-14 | Seller cannot see own products in buyer feed | `productRepo` applies `sellerId: { not: req.user.id }` when authenticated user is also a seller. |
+| INV-14 | Seller cannot see own products in buyer feed | `productRepo` adds `AND p."sellerId" != $userId` clause to the PostGIS raw query when `x-user-id` header is present. Unauthenticated requests have no exclusion. |
 | INV-15 | Review only allowed after COMPLETED SubOrder | `reviewService` verifies `subOrder.status === COMPLETED` and `subOrder.order.buyerId === req.user.id`. |
 | INV-16 | One review per order per product | `Review.@@unique([subOrderId, productId])` enforced at DB level. Reviews link to SubOrder (per-seller transaction), not parent Order. |
 | INV-17 | Bank details masked in all responses | `accountNumber` truncated to last 4 digits. Raw value never leaves server. |

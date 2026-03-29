@@ -1,20 +1,23 @@
 import { prisma } from "@/lib/db";
 import { ERR } from "@/lib/errors";
-import type { AddDealToProductInput, EditDealToProductInput } from "@/schemas";
-import { Prisma } from "@prisma/client";
+import { AddDealToProductInput, EditDealToProductInput, GetProductsInput, GetSellerDealsInput } from "@/schemas";
 
 export const dealService = {
-  // Creates a new active deal for a product after validating ownership and ensuring no existing active deal. Checks product exists → verifies sellerId ownership → checks no ACTIVE deal exists → then create inserts new deal with discount and expiry.
   async add(productId: string, sellerId: string, input: AddDealToProductInput) {
     const product = await prisma.product.findUnique({
       where: { id: productId },
     });
     if (!product) throw ERR.PRODUCT_NOT_FOUND;
-    if (product.sellerId !== sellerId) throw ERR.FORBIDDEN;
+    if (product.sellerId != sellerId) throw ERR.FORBIDDEN;
+
+    // Only one ACTIVE deal per product (service-layer guard)
     const existing = await prisma.deal.findFirst({
-      where: { productId, status: "ACTIVE" },
+      where: { productId, status: "ACTIVE", expiresAt: { gt: new Date() } },
     });
     if (existing) throw ERR.DEAL_EXISTS;
+
+    if (input.expiresAt <= new Date()) throw ERR.INVALID_EXPIRY_TIME;
+
     return prisma.deal.create({
       data: {
         productId,
@@ -26,55 +29,87 @@ export const dealService = {
     });
   },
 
-  // Updates an existing active deal for a product with new discount and expiry. findFirst ensures an ACTIVE deal exists for given productId + sellerId → if not, throws error → else update modifies discountPercent and expiresAt.
   async edit(
     productId: string,
     sellerId: string,
     input: EditDealToProductInput,
   ) {
+    const product = await prisma.product.findUnique({
+      where: { id: productId },
+    });
+    if (!product) throw ERR.PRODUCT_NOT_FOUND;
+    if (product.sellerId != sellerId) throw ERR.FORBIDDEN;
+
+    // Only one ACTIVE deal per product (service-layer guard)
     const deal = await prisma.deal.findFirst({
-      where: { productId, sellerId, status: "ACTIVE" },
+      where: { productId, status: "ACTIVE", expiresAt: { gt: new Date() } },
     });
     if (!deal) throw ERR.NO_ACTIVE_DEAL;
+
+    if (input.expiresAt && input.expiresAt <= new Date())
+      throw ERR.INVALID_EXPIRY_TIME;
+
     return prisma.deal.update({
       where: { id: deal.id },
       data: {
-        discountPercent: input.discountPercent,
-        expiresAt: input.expiresAt,
+        ...(input.discountPercent !== undefined
+          ? { discountPercent: input.discountPercent }
+          : {}),
+        ...(input.expiresAt !== undefined
+          ? { expiresAt: input.expiresAt }
+          : {}),
       },
     });
   },
 
-  // Finds an active deal for a product and marks it as expired (soft remove). findFirst checks for an ACTIVE deal → if none, throws error → else update sets status = "EXPIRED" for that deal.
   async remove(productId: string, sellerId: string) {
     const deal = await prisma.deal.findFirst({
-      where: { productId, sellerId, status: "ACTIVE" },
+      where: { productId, status: "ACTIVE" },
     });
     if (!deal) throw ERR.NO_ACTIVE_DEAL;
+    if (deal.sellerId != sellerId) throw ERR.FORBIDDEN;
+
     return prisma.deal.update({
       where: { id: deal.id },
       data: { status: "EXPIRED" },
     });
   },
 
-  // Fetches a paginated list of deals for a seller, optionally filtered by status, including product + its price tiers. Builds dynamic where → "all" = no status filter, else maps to ACTIVE/EXPIRED → findMany with include (product + tiers) → applies skip/take pagination and createdAt DESC sorting.
-  async listMine(
-    sellerId: string,
-    status: string,
-    page: number,
-    limit: number,
-  ) {
-    const where: Prisma.DealWhereInput =
-      status === "all"
-        ? { sellerId }
-        : { sellerId, status: status === "active" ? "ACTIVE" : "EXPIRED" };
+  async listMine(sellerId: string, input: GetSellerDealsInput) {
+    const safePage = Math.max(1, input.page ?? 1);
+    const safeLimit = Math.min(50, Math.max(1, input.limit ?? 20));
+
+    const statusFilter =
+      input.status === "active"
+        ? { status: "ACTIVE" as const }
+        : input.status === "expired"
+          ? { status: "EXPIRED" as const }
+          : {};
 
     return prisma.deal.findMany({
-      where,
-      include: { product: { include: { priceTiers: true } } },
-      skip: (page - 1) * limit,
-      take: limit,
+      where: { sellerId, ...statusFilter },
+      include: {
+        product: {
+          include: { priceTiers: true },
+        },
+      },
+      skip: (safePage - 1) * safeLimit,
+      take: safeLimit,
       orderBy: { createdAt: "desc" },
     });
   },
+
+  // Called from GET /api/products/deals — all products with an active deal
+  async listActiveDealsNearby(lat: number, lng: number, radius: number) {
+    // Reuses productRepo.findNearBy with deal active filter
+    const { productRepo: repo } = await import('@/repo/product.repo');
+    return repo.findNearBy({
+      lat,
+      lng,
+      radius,
+      dealActive: true,
+      limit: 50,
+      page: 1
+    } as GetProductsInput, undefined);
+  }
 };

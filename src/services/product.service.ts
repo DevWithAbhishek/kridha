@@ -3,67 +3,83 @@ import { ERR } from "@/lib/errors";
 import { productRepo } from "@/repo/product.repo";
 import type {
   AddProductInput,
-  UpdateProductInput,
   GetProductsInput,
+  UpdateProductInput,
+  GetSellerProductsInput,
 } from "@/schemas";
 
 export const productService = {
-  async listNearby(input: GetProductsInput, userId?: string) {
-    return productRepo.findNearby(input, userId);
+  async listNearBy(input: GetProductsInput, userId?: string) {
+    return productRepo.findNearBy(input, userId);
   },
 
   async getById(id: string) {
-    const p = await productRepo.findById(id);
-    if (!p) throw ERR.PRODUCT_NOT_FOUND;
-    return p;
+    const product = await productRepo.findById(id);
+    if (!product) throw ERR.PRODUCT_NOT_FOUND;
+    return product;
+  },
+
+  async getSellerProductById(productId: string, sellerId: string) {
+    const product = await productRepo.findBySellerAndId(productId, sellerId);
+    if (!product) throw ERR.PRODUCT_NOT_FOUND;
+    return product;
   },
 
   async create(sellerId: string, input: AddProductInput) {
-    const { priceTiers, ...rest } = input; // Extracts priceTiers from input and keeps the remaining fields in rest.
-    const seller = await prisma.sellerProfile.findUnique({
-      where: { id: sellerId },
+    // Seller must be verified before listing products
+    const profile = await prisma.sellerProfile.findUnique({
+      where: { userId: sellerId },
     });
-    if (!seller) throw ERR.INVALID_CREDENTIALS;
-    // Creates a new product with its price tiers and returns it with tiers included. Spreads main fields (rest) → adds sellerId + city → nested write priceTiers.create inserts related rows in same query → include fetches created tiers.
+    if (!profile || profile.profileStatus !== "VERIFIED") {
+      throw ERR.FORBIDDEN; //API returns 403 - "Seller not yet verified"
+    }
+
+    const { priceTiers, ...rest } = input;
     return prisma.product.create({
       data: {
         ...rest,
         sellerId,
-        city: seller.city,
+        city: profile.city,
         priceTiers: { create: priceTiers },
       },
       include: { priceTiers: true },
     });
   },
 
-  async update(id: string, sellerId: string, input: UpdateProductInput) {
-    const product = await prisma.product.findUnique({ where: { id } });
+  async update(productId: string, sellerId: string, input: UpdateProductInput) {
+    const product = await prisma.product.findUnique({
+      where: { id: productId },
+    });
     if (!product) throw ERR.PRODUCT_NOT_FOUND;
-    if (product.sellerId !== sellerId) throw ERR.FORBIDDEN;
+    if (product.sellerId != sellerId) throw ERR.FORBIDDEN;
+
     const { priceTiers, ...rest } = input;
-    // Updates a product and optionally replaces all its price tiers. Spreads rest → if priceTiers exists, Prisma performs nested write: deleteMany (removes all old tiers) + create (inserts new ones) → returns updated product with tiers.
     return prisma.product.update({
-      where: { id },
+      where: { id: productId },
       data: {
         ...rest,
+        // Replace all price tiers atomically when supplied
         ...(priceTiers
-          ? {
-              priceTiers: { deleteMany: {}, create: priceTiers },
-            }
+          ? { priceTiers: { deleteMany: {}, create: priceTiers } }
           : {}),
       },
       include: { priceTiers: true },
     });
   },
 
-  async softDelete(id: string, sellerId: string) {
-    const product = await prisma.product.findUnique({ where: { id } });
+  async softDelete(productId: string, sellerId: string) {
+    const product = await prisma.product.findUnique({
+      where: { id: productId },
+    });
     if (!product) throw ERR.PRODUCT_NOT_FOUND;
-    if (product.sellerId !== sellerId) throw ERR.FORBIDDEN;
-    // Marks a product as soft-deleted instead of removing it from the database.
-    return prisma.product.update({
-      where: { id },
-      data: { productStatus: "DELETED", deletedAt: new Date() },
+    if (product.sellerId != sellerId) throw ERR.FORBIDDEN;
+
+    return await prisma.product.update({
+      where: { id: productId },
+      data: {
+        productStatus: "DELETED",
+        deletedAt: new Date(),
+      },
     });
   },
 };

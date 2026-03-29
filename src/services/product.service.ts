@@ -19,6 +19,10 @@ export const productService = {
     return product;
   },
 
+  async getSellerProducts(sellerId: string, input: GetSellerProductsInput) {
+    return productRepo.findBySeller(sellerId, input);
+  },
+
   async getSellerProductById(productId: string, sellerId: string) {
     const product = await productRepo.findBySellerAndId(productId, sellerId);
     if (!product) throw ERR.PRODUCT_NOT_FOUND;

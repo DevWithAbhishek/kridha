@@ -5,9 +5,9 @@ import { productService } from "@/services/product.service";
 import { Role } from "@prisma/client";
 import { NextRequest, NextResponse } from "next/server";
 
-// to fetch a single product by ID. Extracts id from async params → calls productService.getById(id) → returns product in JSON or handles errors.
+// to fetch a single product by ID. PUBLIC route.
 export async function GET(
-  req: NextRequest,
+  _req: NextRequest,
   { params }: { params: Promise<{ id: string }> },
 ) {
   try {
@@ -19,7 +19,7 @@ export async function GET(
   }
 }
 
-// to update a product by an authorized seller. Validates seller via requireRole → extracts id from params → parses body with schema → calls productService.update → returns updated product.
+// to update a product by an authorized seller, seller only, must own product.
 export async function PATCH(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> },
@@ -35,7 +35,7 @@ export async function PATCH(
   }
 }
 
-// to soft-delete a product for an authorized seller. Validates seller via requireRole → extracts id → calls productService.softDelete (marks as deleted, not actual removal) → returns success response.
+// to soft-delete a product for an authorized seller, seller only, must own product.
 export async function DELETE(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> },

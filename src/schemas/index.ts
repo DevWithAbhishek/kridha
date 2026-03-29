@@ -268,6 +268,12 @@ export const GetProductsWithActiveDealSchema = z.object({
     .default("distance"),
   page: z.coerce.number().positive().optional().default(1),
   limit: z.coerce.number().positive().max(50).optional().default(20),
+  radius: z.coerce.number().positive().max(50).optional().default(10),
+  // 🔥 Add ALL fields used in service
+  isBranded: z.coerce.boolean().optional(),
+  minPrice: z.coerce.number().optional(),
+  maxPrice: z.coerce.number().optional(),
+  q: z.string().optional(),
 });
 
 // ── 6. Products — Seller ──────────────────────────────────────────────────
@@ -311,7 +317,10 @@ export const AddProductSchema = z
         path: ["blurHash"],
       });
     }
-    if (data.maxOrderQuantity !== undefined && data.maxOrderQuantity < data.minOrderQuantity) {
+    if (
+      data.maxOrderQuantity !== undefined &&
+      data.maxOrderQuantity < data.minOrderQuantity
+    ) {
       ctx.addIssue({
         code: "custom",
         message: "maxOrderQty must be greater than or equal to minOrderQty",

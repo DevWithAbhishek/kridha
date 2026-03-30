@@ -1,5 +1,4 @@
-import { Prisma, ProductStatus, RefundStatus } from "@prisma/client";
-import { productService } from "./product.service";
+import { Prisma} from "@prisma/client";
 import { prisma } from "@/lib/db";
 import { ERR } from "@/lib/errors";
 import { calcUnitPrice } from "@/lib/pricing";
@@ -7,7 +6,7 @@ import { getRazorPay } from "@/lib/razorpay";
 import { isCancellable, validateTransition } from "@/lib/state-machine";
 import { calcRefundAmount } from "@/lib/refund";
 
-interface CreateItem {
+export interface CreateItem {
   productId: string;
   quantity: number;
   pickupWindowId: string;
@@ -26,7 +25,7 @@ export const orderService = {
     const enriched: EnrichedItem[] = [];
     for (const item of items) {
       const product = await prisma.product.findUnique({
-        where: { id: item.productId, ProductStatus: "ACTIVE", deletedAt: null },
+        where: { id: item.productId, productStatus: "ACTIVE", deletedAt: null },
         include: { priceTiers: true },
       });
       if (!product) throw ERR.PRODUCT_NOT_FOUND;
@@ -303,7 +302,7 @@ export const orderService = {
     await prisma.$transaction(updates);
     return {
       refundAmount,
-      RefundStatus: refundAmount > 0 ? "INITIATED" : "NOT_APPLICABLE",
+      refundStatus: refundAmount > 0 ? "INITIATED" : "NOT_APPLICABLE",
     };
   },
 

@@ -1,0 +1,60 @@
+import { NextRequest, NextResponse } from "next/server";
+import { handleError } from "@/lib/handleError";
+import { getUser } from "@/lib/get-user";
+import { CreateOrderSchema, GetOrdersSchema } from "@/schemas";
+import { orderService } from "@/services/order.service";
+import { orderRepo } from "@/repo/order.repo";
+import { OrderStatus } from "@prisma/client";
+
+// GET /api/orders — BUYER sees placed, SELLER sees received (same endpoint)
+export async function GET(req: NextRequest) {
+    try {
+        const user = getUser(req);
+        const q = GetOrdersSchema.parse(Object.fromEntries(req.nextUrl.searchParams));
+        const result = await orderRepo.listSubOrders(user.userId, {
+          status: q.status as OrderStatus,
+          page: q.page ?? 1,
+          limit: q.limit ?? 20,
+          sortBy: (q.sortBy ?? "created_desc") as
+            | "created_asc"
+            | "created_desc",
+        });
+        return NextResponse.json({ success: true, data: result });
+    } catch (err) {
+        return handleError(err);
+    }
+}
+
+// POST /api/orders — direct order (not via cart); buyer only
+export async function POST(req: NextRequest) {
+    try {
+        const user = getUser(req);
+        const body = CreateOrderSchema.parse(await req.json());
+        const items = body.items.map(i => ({
+            productId: i.productId,
+            pickupWindowId: i.pickupWindowId,
+            quantity: i.quantity,
+            pickUpDate: new Date(i.pickupDate),
+        }));
+
+        const result = await orderService.create(user.userId, items, body.cartSessionId);
+        return NextResponse.json({
+            success: true, data: {
+                order: {
+                    id: result.order.id,
+                    totalAmount: result.order.totalAmount,
+                    advanceAmount: result.totalAdvance,
+                platformFee: result.order.platformFee,
+                },
+                subOrders: result.subOrders,
+                advance: {
+                    razorpayOrderId: result.razorpayOrderId,
+                    amount: result.totalAdvance,
+                    currency: 'INR'
+                },
+            }
+        }, { status: 201 });
+    } catch (err) {
+        return handleError(err);
+    }
+}

@@ -58,7 +58,7 @@ export const dealService = {
         ...(input.expiresAt !== undefined
           ? { expiresAt: input.expiresAt }
           : {}),
-      },
+      }, //Conditionally updates only the fields provided (discountPercent, expiresAt) in a partial update.
     });
   },
 
@@ -79,6 +79,7 @@ export const dealService = {
     const safePage = Math.max(1, input.page ?? 1);
     const safeLimit = Math.min(50, Math.max(1, input.limit ?? 20));
 
+    // Enables flexible query composition by conditionally injecting filters into Prisma where without branching query logic.
     const statusFilter =
       input.status === "active"
         ? { status: "ACTIVE" as const }
@@ -86,6 +87,7 @@ export const dealService = {
           ? { status: "EXPIRED" as const }
           : {};
 
+    // Executes a paginated, relation-loaded query that joins deals with products and tiers, optimizing data fetching with a single DB call.
     return prisma.deal.findMany({
       where: { sellerId, ...statusFilter },
       include: {

@@ -65,7 +65,7 @@ export const productService = {
         // Replace all price tiers atomically when supplied
         ...(priceTiers
           ? { priceTiers: { deleteMany: {}, create: priceTiers } }
-          : {}),
+          : {}), // Performs a conditional nested write that atomically deletes existing relations and recreates them, ensuring data consistency.
       },
       include: { priceTiers: true },
     });

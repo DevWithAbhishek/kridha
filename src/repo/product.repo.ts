@@ -5,11 +5,7 @@ import {
   buildOrderClause,
   NearbyFilters,
 } from "@/lib/postgis";
-import {
-  AddPickupWindowSchema,
-  type GetProductsInput,
-  type GetSellerProductsInput,
-} from "@/schemas";
+import { type GetProductsInput, type GetSellerProductsInput } from "@/schemas";
 
 //typed result of the raw PostGIS query
 export interface ProductRow {
@@ -66,6 +62,8 @@ export interface ProductWithRelations extends ProductRow {
 }
 
 // Helper — merge relations into raw rows
+// opts parameter: Optional flags object controlling whether to include seller and pickup window data during relation attachment.
+// Function returns a promise resolving to an array of enriched product objects with attached relations.
 async function attachRelations(
   rows: ProductRow[],
   opts: { includeSeller?: boolean; includePickupWindows?: boolean } = {},
@@ -73,16 +71,16 @@ async function attachRelations(
   const ids = rows.map((r) => r.id);
   if (!ids.length) return [];
 
-  const sellerIds = [...new Set(rows.map((r) => r.sellerId))];
+  const sellerIds = [...new Set(rows.map((r) => r.sellerId))]; // Extracts unique seller IDs from products to avoid redundant DB queries
   const [tiers, deals, sellers, windows] = await Promise.all([
-    prisma.priceTier.findMany({ where: { productId: { in: ids } } }),
+    prisma.priceTier.findMany({ where: { productId: { in: ids } } }), // Batch fetches all price tiers for given product IDs using a single IN query.
     prisma.deal.findMany({
       where: {
         productId: { in: ids },
         status: "ACTIVE",
         expiresAt: { gt: new Date() },
       },
-    }),
+    }), // Retrieves only currently active and non-expired deals for the selected products.
     opts.includeSeller
       ? prisma.sellerProfile.findMany({
           where: { userId: { in: sellerIds } },
@@ -94,20 +92,21 @@ async function attachRelations(
             user: { select: { id: true, name: true } },
           },
         })
-      : Promise.resolve([]),
+      : Promise.resolve([]), //Fetches seller data only when required, otherwise returns an empty resolved promise to maintain Promise.all structure.
     opts.includePickupWindows
       ? prisma.pickupWindow.findMany({
           where: { sellerId: { in: ids }, deletedAt: null },
         })
       : Promise.resolve([]),
-  ]);
+  ]); // Conditionally loads pickup windows or skips DB call while preserving parallel execution flow.
 
   // Build maps for O(1) lookup
-  const tierMap = new Map<string, typeof tiers>();
+  const tierMap = new Map<string, typeof tiers>(); // Initializes a hash map (O(1) access) keyed by productId, where each value will store an array of price tiers for efficient grouping and lookup.
   const dealMap = new Map<string, (typeof deals)[0]>();
   const sellerMap = new Map<string, (typeof sellers)[0]>();
   const windowMap = new Map<string, typeof windows>();
 
+  // Iteratively groups tiers into arrays per productId by retrieving existing entries (or initializing empty), then pushing and updating—forming a productId → tiers[] index.
   for (const t of tiers) {
     const arr = tierMap.get(t.productId) ?? [];
     arr.push(t);
@@ -122,9 +121,10 @@ async function attachRelations(
     windowMap.set(w.sellerId, arr);
   }
 
+  // Performs a single-pass transformation (O(n)) over products, merging base row data with precomputed maps (tiers, deals, sellers, windows) using O(1) lookups—effectively simulating a manual in-memory join.
   return rows.map((r) => {
     const sellerData = sellerMap.get(r.sellerId);
-    const winData = windowMap.get(r.sellerId) ?? [];
+    const winData = windowMap.get(r.sellerId) ?? []; //Retrieves pickup windows for a seller via O(1) map lookup, defaulting to empty array to ensure null-safe downstream mapping.
     const deal = dealMap.get(r.id);
 
     return {
@@ -142,7 +142,7 @@ async function attachRelations(
               sellerRating: sellerData.sellerRating,
             },
           }
-        : {}),
+        : {}), // Uses short-circuit evaluation + spread to dynamically include seller object only when flag is enabled and data exists, avoiding unnecessary payload bloat.
       ...(opts.includePickupWindows
         ? {
             pickupWindows: winData.map((w) => ({
@@ -154,7 +154,7 @@ async function attachRelations(
               daysActive: w.daysActive,
             })),
           }
-        : {}),
+        : {}), // Conditionally maps raw DB window records into a clean DTO structure, projecting only required fields while preserving array shape.
     };
   });
 }
@@ -190,7 +190,7 @@ export const productRepo = {
     const whereClause = buildWhereClause(filters);
     const orderClause = buildOrderClause(filters.sortBy, input.lat, input.lng);
 
-    // price HAVING filters (min_price is a lateral subquery alias)
+    // price HAVING filters (min_price is a lateral subquery alias) - to filter products based on computed min_price.
     const priceHavingClause = (() => {
       const parts: Prisma.Sql[] = [];
       if (input.minPrice !== undefined)
@@ -221,13 +221,13 @@ export const productRepo = {
         ${priceHavingClause}
         ${orderClause}
         LIMIT ${filters.limit} OFFSET ${filters.offset}
-        `),
+        `), // Fetches filtered, sorted, paginated products with computed distance (km) and minimum price per product.
 
       prisma.$queryRaw<[{ count: bigint }]>(Prisma.sql`
         SELECT COUNT(*) AS count
         FROM "product" p
         ${whereClause}
-        `),
+        `), // Executes a raw SQL query to count total products matching filters, returning the result as a bigint.
     ]);
 
     const total = Number(countResult[0].count);
@@ -248,6 +248,7 @@ export const productRepo = {
   },
 
   async findById(id: string): Promise<ProductWithRelations | null> {
+    // Fetches a single active, non-deleted product by ID using raw SQL
     const rows = await prisma.$queryRaw<ProductRow[]>(Prisma.sql`
       SELECT p.*, 0 AS distance_km, NULL AS min_price
       FROM "product" p
@@ -280,11 +281,12 @@ export const productRepo = {
         deals: {
           where: { status: "ACTIVE", expiresAt: { gt: new Date() } },
           take: 1,
-        },
-        _count: { select: { orderItems: true } }, // totalOrders - never stored
+        }, // Loads at most one active, non-expired deal per product using SQL WHERE + LIMIT 1.
+        _count: { select: { orderItems: true } }, // totalOrders - never stored. Returns count of related orderItems via SQL aggregation without fetching full relation data.
       },
       skip: (safePage - 1) * safeLimit,
-      take: safeLimit,
+      take: safeLimit, // Implements offset-based pagination using SQL OFFSET + LIMIT.
+
       orderBy: { createdAt: "desc" },
     });
   },
@@ -297,8 +299,8 @@ export const productRepo = {
         deals: {
           where: { status: "ACTIVE", expiresAt: { gt: new Date() } },
           take: 1,
-        },
-        _count: { select: { orderItems: true } },
+        }, // Fetches at most one active, non-expired deal per product via a filtered relation query.take: 1 adds SQL LIMIT 1
+        _count: { select: { orderItems: true } }, // Instructs Prisma to aggregate and return the count of related orderItems per product using a SQL COUNT under the hood, without fetching actual rows.
       },
     });
   },

@@ -17,7 +17,7 @@ import { AppError } from "./errors";
 export function calcUnitPrice(quantity: number, tiers: PriceTier[]): number {
   if (!tiers.length) throw new AppError("PRICE_TIER_NOT_FOUND", "No Price Tier Found", 404);
 
-  const sorted = [...tiers].sort((a, b) => a.minQty - b.minQty);
+  const sorted = [...tiers].sort((a, b) => a.minQty - b.minQty); // Sort with O(nlog(n))
 
   let price = sorted[0].pricePerUnit; // start with lowest-tier price
 

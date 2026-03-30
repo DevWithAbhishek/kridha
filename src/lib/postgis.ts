@@ -22,6 +22,7 @@ export interface NearbyFilters {
  */
 
 export function buildWhereClause(f: NearbyFilters): Prisma.Sql {
+  // Filters products within a given radius from user location using PostGIS ST_DWithin (index-optimized distance check).
   const geoFilter = Prisma.sql`
     AND ST_DWithin(
         p.location,
@@ -38,7 +39,7 @@ export function buildWhereClause(f: NearbyFilters): Prisma.Sql {
       ? Prisma.sql`AND p."isBranded" = ${f.isBranded}`
       : Prisma.empty;
 
-  // dealActive = true → only rows that have an active deal subquery result, not null (exists) → else no filter
+  // dealActive = true → Conditionally adds a filter to return only products having at least one currently active (non-expired) deal using EXISTS.
   const dealClause = f.dealActive
     ? Prisma.sql`
         AND EXISTS (
@@ -82,6 +83,7 @@ export function buildWhereClause(f: NearbyFilters): Prisma.Sql {
  * ORDER BY clause.
  * distance: KNN operator <-> uses the GIST index — fastest.
  * price_asc / price_desc: uses the min_price lateral subquery result.
+ * Dynamically applies sorting by price or distance, using NULLS LAST for price and PostGIS KNN <-> operator for efficient nearest-first ordering.
  */
 
 export function buildOrderClause(

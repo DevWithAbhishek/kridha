@@ -1,116 +1,35 @@
+// Replaces the previous version. Rate limiting added before auth check.
+// Auth endpoints: 5 req/min per IP. All other: 60 req/min per IP.
+// ─────────────────────────────────────────────────────────────────────────────
+
 import { NextRequest, NextResponse } from "next/server";
 import jwt from "jsonwebtoken";
-import { JwtPayload } from "@/services/token.service";
+import { Ratelimit } from "@upstash/ratelimit";
+import { Redis } from "@upstash/redis";
 
-//Completely public routes - no token needed, not even optional
-const PUBLIC_EXACT = new Set([
-  "/api/auth/signup",
-  "api/auth/login",
-  "/api/auth/refresh",
-  "/api/auth/reset-pin-request",
-  "api/auth/reset-pin",
-  "/api/health",
-  "/api/webhooks/razorpay",
-]);
-
-// Public GEt routes - auth is optional (enriches the response object if user is present)
-const PUBLIC_GET = [
-  /^\/api\/products(\/[^\/]+)?$/,
-  /^\/api\/products\/deals$/,
-  /^\/api\/reviews$/,
-];
-
-export function unauthorized() {
-  return NextResponse.json(
-    {
-      success: false,
-      code: "UNAUTHENTICATED",
-      message: "Please login to continue.",
-    },
-    { status: 401 },
-  );
+interface JwtPayload {
+  userId: string;
+  roles: string[];
 }
 
-export function setHeader(token: string, req: NextRequest) {
-    const payload = jwt.verify(token, process.env.JWT!) as JwtPayload;
-        const h = new Headers(req.headers);
-        h.set('x-user-id', payload.userId);
-        h.set('x-user-roles', JSON.stringify(payload.roles));
-        return NextResponse.next({ request: { headers: h } });
-}
+const redis = new Redis({
+  url: process.env.UPSTASH_REDIS_REST_URL!,
+  token: process.env.UPSTASH_REDIS_REST_TOKEN!,
+});
 
-export function middleware(req: NextRequest) {
-    const { pathname } = req.nextUrl;
-    const method = req.method;
+// Two limiters — tighter for auth endpoints to slow brute-force
+const generalLimiter = new Ratelimit({
+  redis,
+  limiter: Ratelimit.slidingWindow(60, "1 m"),
+  analytics: false,
+});
 
-    // Vercel Cron endpoints
-    if (pathname.startsWith('/api/cron')) {
-        const auth = req.headers.get("authorization");
-        if (!auth?.startsWith("Bearer ")) return  unauthorized();
-        const token = auth.slice(7);
-        if (token !== process.env.CRON_SECRET) return unauthorized();
-        return NextResponse.next();
-    }
+const authLimiter = new Ratelimit({
+  redis,
+  limiter: Ratelimit.slidingWindow(5, "1 m"),
+  analytics: false,
+});
 
-    // Fully public route
-    if (PUBLIC_EXACT.has(pathname)) return NextResponse.next();
-
-    // Public GET routes - try to attach user but never reject request
-    const isPublicGet = method === "GET" && PUBLIC_GET.some(r => r.test(pathname));
-
-    const token = req.cookies.get("kridha_access")?.value;
-
-    if (isPublicGet) {
-        if (token) {
-            try {
-                return setHeader(token, req);
-            } catch (err) {
-                // Invalid token - ignore and continue as unauthenticated
-            }
-        }
-        return NextResponse.next();
-    }
-
-    // Protected route - reject if no valid token
-    if (!token) return unauthorized();
-    try {
-        return setHeader(token, req);
-    } catch (err) {
-        return unauthorized();
-    }
-}
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-/**
- * 
- * 
- * 
- * import { NextRequest, NextResponse } from "next/server";
-import jwt from "jsonwebtoken";
-import { JwtPayload } from "@/services/token.service";
-
-// Completely public — no token needed, not even optional
 const PUBLIC_EXACT = new Set([
   "/api/auth/signup",
   "/api/auth/login",
@@ -121,40 +40,58 @@ const PUBLIC_EXACT = new Set([
   "/api/webhooks/razorpay",
 ]);
 
-const PUBLIC_GET = [
+const PUBLIC_GET_PATTERNS = [
   /^\/api\/products(\/[^\/]+)?$/,
   /^\/api\/products\/deals$/,
   /^\/api\/reviews$/,
 ];
 
-export function middleware(req: NextRequest) {
+const AUTH_PATHS = new Set([
+  "/api/auth/signup",
+  "/api/auth/login",
+  "/api/auth/reset-pin-request",
+  "/api/auth/reset-pin",
+]);
 
+export async function middleware(req: NextRequest) {
   const { pathname } = req.nextUrl;
-  const method = req.method;
 
-  // Cron endpoints — verify CRON_SECRET
+  // Cron endpoints — Bearer CRON_SECRET only
   if (pathname.startsWith("/api/cron/")) {
     const auth = req.headers.get("authorization");
-    // if (auth !== `Bearer ${process.env.CRON_SECRET}`) {
-    //   return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    //   }
-    if (!auth?.startsWith("Bearer "))
+    if (auth !== `Bearer ${process.env.CRON_SECRET}`) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-
-    const token = auth.slice(7);
-
-    if (token !== process.env.CRON_SECRET)
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
     return NextResponse.next();
   }
 
-  // Fully public route
+  // Rate limiting — applied to all routes except webhooks (Razorpay must never be 429'd)
+  if (pathname !== "/api/webhooks/razorpay") {
+    const ip = req.headers.get("x-forwarded-for") ?? "127.0.0.1";
+    const limiter = AUTH_PATHS.has(pathname) ? authLimiter : generalLimiter;
+    const { success, remaining } = await limiter.limit(ip);
+
+    if (!success) {
+      return NextResponse.json(
+        {
+          success: false,
+          code: "RATE_LIMITED",
+          message: "Too many requests. Try again later.",
+        },
+        {
+          status: 429,
+          headers: { "X-RateLimit-Remaining": String(remaining) },
+        },
+      );
+    }
+  }
+
+  // Fully public routes
   if (PUBLIC_EXACT.has(pathname)) return NextResponse.next();
 
-  // Public GET — try to attach user but never reject
+  // Public GET — optional auth (for INV-14 seller exclusion)
   const isPublicGet =
-    method === "GET" && PUBLIC_GET.some((r) => r.test(pathname));
-
+    req.method === "GET" && PUBLIC_GET_PATTERNS.some((r) => r.test(pathname));
   const token = req.cookies.get("kridha_access")?.value;
 
   if (isPublicGet) {
@@ -164,16 +101,18 @@ export function middleware(req: NextRequest) {
           token,
           process.env.JWT_SECRET!,
         ) as JwtPayload;
-        const h = new Headers(req.headers);
-        h.set("x-user-id", payload.userId);
-        h.set("x-user-roles", JSON.stringify(payload.roles));
-        return NextResponse.next({ request: { headers: h } });
-      } catch {}
+        const headers = new Headers(req.headers);
+        headers.set("x-user-id", payload.userId);
+        headers.set("x-user-roles", JSON.stringify(payload.roles));
+        return NextResponse.next({ request: { headers } });
+      } catch {
+        /* treat as anonymous */
+      }
     }
     return NextResponse.next();
   }
 
-  // Protected route — reject if no valid token
+  // Protected — require valid access token
   if (!token) {
     return NextResponse.json(
       {
@@ -187,10 +126,10 @@ export function middleware(req: NextRequest) {
 
   try {
     const payload = jwt.verify(token, process.env.JWT_SECRET!) as JwtPayload;
-    const h = new Headers(req.headers);
-    h.set("x-user-id", payload.userId);
-    h.set("x-user-roles", JSON.stringify(payload.roles));
-    return NextResponse.next({ request: { headers: h } });
+    const headers = new Headers(req.headers);
+    headers.set("x-user-id", payload.userId);
+    headers.set("x-user-roles", JSON.stringify(payload.roles));
+    return NextResponse.next({ request: { headers } });
   } catch {
     return NextResponse.json(
       {
@@ -204,8 +143,3 @@ export function middleware(req: NextRequest) {
 }
 
 export const config = { matcher: ["/api/:path*"] };
-
- * 
- * 
- * 
- */

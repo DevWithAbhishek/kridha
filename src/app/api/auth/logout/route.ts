@@ -1,20 +1,16 @@
-import { clearAuthCookies } from "@/lib/cookies";
+import { NextRequest, NextResponse } from "next/server";
 import { handleError } from "@/lib/handleError";
 import { tokenService } from "@/services/token.service";
-import { NextRequest, NextResponse } from "next/server";
-
+import { clearAuthCookies } from "@/lib/cookies";
 
 export async function POST(req: NextRequest) {
-    try {
-        const rawToken = req.cookies.get('kridha_refresh')?.value;
-
-        if (rawToken) await tokenService.revokeOne(rawToken);
-
-        const response = NextResponse.json({ success: true, message: "Logged out successfully" }, { status: 200 });
-        clearAuthCookies(response);
-
-        return response;
-    } catch (err) {
-        handleError(err);
-    }
+  try {
+    const raw = req.cookies.get("kridha_refresh")?.value;
+    if (raw) await tokenService.revokeOne(raw);
+    const res = NextResponse.json({ success: true, message: "Logged out." });
+    clearAuthCookies(res);
+    return res;
+  } catch (err) {
+    return handleError(err);
+  }
 }

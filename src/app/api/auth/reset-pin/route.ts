@@ -1,17 +1,17 @@
+import { NextRequest, NextResponse } from "next/server";
 import { handleError } from "@/lib/handleError";
-import { ResetPinSchema } from "@/schemas"
+import { ResetPinSchema } from "@/schemas";
 import { authService } from "@/services/auth.service";
-import { NextRequest, NextResponse } from "next/server"
 
-
-export async function POST (req: NextRequest){
-    try {
-        const body = ResetPinSchema.parse(req.json());
-        const result = await authService.resetPin(body);
-
-        // ideally - cookies will be cleared, new cookies will be set
-        return NextResponse.json({ success: true, message: result.message }, { status: 200 });
-    } catch (err) {
-        handleError(err);
-    }
+export async function POST(req: NextRequest) {
+  try {
+    const body = ResetPinSchema.parse(await req.json());
+    await authService.resetPin(body);
+    return NextResponse.json({
+      success: true,
+      message: "PIN reset successfully. Login to continue.",
+    });
+  } catch (err) {
+    return handleError(err);
+  }
 }

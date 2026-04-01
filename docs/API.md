@@ -1,7 +1,7 @@
 # Kridha — API Contract
 
-> **Version:** 1.2.0-beta
-> **Last updated:** March 28, 2026
+> **Version:** 1.3.0-beta
+> **Last updated:** April 1, 2026
 > **Author:** Abhishek · DevWithAbhishek
 
 ---
@@ -33,22 +33,21 @@ Every response — success or error — follows this shape:
 
 ## Authentication
 
-Kridha uses **HttpOnly cookies** for token transport. The browser sends them
-automatically — no manual header management needed.
+Kridha uses **HttpOnly cookies** — no Authorization header.
 
-| Cookie | Path | Max-Age | Description |
-|--------|------|---------|-------------|
-| `kridha_access` | `/` | 15 min | JWT access token |
-| `kridha_refresh` | `/api/auth` | 7 days | Refresh token (hash stored in DB) |
+| Cookie | Path | Max-Age | httpOnly | Notes |
+|--------|------|---------|----------|-------|
+| `kridha_access` | `/` | 15 min | ✅ | JWT access token |
+| `kridha_refresh` | `/api/auth` | 7 days | ✅ | Rotation chain (sha256 hash stored in DB) |
+| `kridha_lang` | `/` | 1 year | ❌ | `"hi"` or `"en"` — next-intl reads via JS |
 
-Both cookies are `HttpOnly`, `Secure` (production), `SameSite=Strict`.
-JavaScript cannot read them — XSS-proof by design.
+All cookies are `Secure` (production), `SameSite=Strict`. `kridha_access` and `kridha_refresh`
+are `HttpOnly` (XSS-proof). `kridha_lang` is NOT HttpOnly — next-intl client-side hooks need it.
+It contains only `"hi"` or `"en"` — no secret to protect.
 
-Access tokens expire in **15 minutes**.
-Call `POST /api/auth/refresh` with no body — browser sends the refresh cookie automatically.
+Access tokens expire in **15 minutes**. Call `POST /api/auth/refresh` with no body.
 
-> **Postman / API testing:** Set the cookie manually in Postman.
-> Add `Cookie: kridha_access=<token>` to the request headers.
+> **Postman / API testing:** Add `Cookie: kridha_access=<token>` to request headers.
 
 ---
 
@@ -251,6 +250,7 @@ Body:    None — refresh token read from kridha_refresh cookie
 }
 Set-Cookie: kridha_access=; Max-Age=0   (deleted)
 Set-Cookie: kridha_refresh=; Max-Age=0  (deleted)
+Set-Cookie: kridha_lang=;    Max-Age=0   (deleted)
 ```
 
 **Errors**
@@ -1146,7 +1146,7 @@ Body:    None
       "dealDiscountPercent":  number | null,
       "dealExpiresAt":        string | null,
       "dealUpdatedAt":        string | null,
-      "totalOrders":          number,   — computed via Prisma _count, not a stored column   — computed from _count.orderItems, never stored
+      "totalOrders":          number,   — computed via Prisma _count, never stored   — computed via Prisma _count, not a stored column   — computed from _count.orderItems, never stored
       "pickupWindows": [
         {
           "id":               string,
@@ -2650,7 +2650,7 @@ Body:    None
 | `VALIDATION_FAILED` | 422 | Zod schema validation failed. Returns `fields` array. |
 | `UNAUTHENTICATED` | 401 | Missing, invalid, or expired Bearer token. |
 | `FORBIDDEN` | 403 | Valid token but wrong role or not resource owner. |
-| `RATE_LIMITED` | 429 | Too many requests to this endpoint. |
+| `RATE_LIMITED` | 429 | Upstash sliding window: 5/min auth endpoints, 60/min general. `X-RateLimit-Remaining` header returned. |
 | `PHONE_NOT_FOUND` | 404 | No account found with this phone number. |
 | `INVALID_CREDENTIALS` | 401 | Wrong phone or PIN on login. |
 | `PIN_LOCKED` | 429 | Too many consecutive failed login attempts. |

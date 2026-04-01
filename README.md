@@ -120,14 +120,14 @@ Violating any of these is a bug, not a missing feature.
 | INV-04 | BUYER cannot access seller-only routes | `requireRole(req, Role.SELLER)` reads `x-user-roles` header set by `middleware.ts`. Returns `403`. |
 | INV-05 | User sees only their own orders | `getUser(req)` reads `x-user-id` set by `middleware.ts`. Order query filters by `buyerId` or `sellerId`. Admins exempt. |
 | INV-06 | Delivery OTP cleared after verification | `deliveryOtp` set to `null` on COMPLETED. Never stored beyond use. |
-| INV-07 | Phone number is the unique user identifier | `phone @unique` enforced at DB level. Signup is silent — duplicate phone returns `201` without revealing existence. |
+| INV-07 | Phone number is the unique user identifier | `phone @unique` enforced at DB level. Silent signup — duplicate phone always returns `201` (enumeration prevention). |
 | INV-08 | Seller store name + address must be unique | `@@unique([storeName, street])` enforced at DB level. |
 | INV-09 | Deal price reverts to original after expiry | Vercel Cron sets `Deal.status = EXPIRED` after `Deal.expiresAt`. Product response reads active deal via JOIN — expired deal returns no discount. |
 | INV-10 | Order total must be >= ₹1000 | `orderService` checks against `PlatformConfig.minOrderAmount` before creating Razorpay advance. |
 | INV-11 | Order cannot confirm without captured advance | Only `payment.captured` webhook triggers `PENDING → CONFIRMED`. No manual endpoint. |
 | INV-12 | Order cannot complete without full payment AND OTP | State machine requires `READY_FOR_OTP_VERIFICATION` before verify-otp is callable. |
 | INV-13 | Refund calculated server-side only | `cancelOrderService` computes from `SubOrder.pickupDeadline`. Client never sends `refundAmount`. Tiers: 24h+ → 100%, 2–24h → 50%, <2h → 0%. |
-| INV-14 | Seller cannot see own products in buyer feed | `productRepo` applies `sellerId: { not: req.user.id }` when authenticated user is also a seller. |
+| INV-14 | Seller cannot see own products in buyer feed | PostGIS raw query adds `AND p."sellerId" != $userId` when `x-user-id` header is present. Anonymous = no exclusion. |
 | INV-15 | Review only allowed after COMPLETED SubOrder | `reviewService` verifies `subOrder.status === COMPLETED` and `subOrder.order.buyerId === req.user.id`. |
 | INV-16 | One review per order per product | `Review.@@unique([subOrderId, productId])` enforced at DB level. Reviews link to SubOrder (per-seller transaction), not parent Order. |
 | INV-17 | Bank details masked in all responses | `accountNumber` truncated to last 4 digits. Raw value never leaves server. |

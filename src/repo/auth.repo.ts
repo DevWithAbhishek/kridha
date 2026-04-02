@@ -3,12 +3,12 @@ import { prisma } from "@/lib/db";
 export const authRepo = {
   async updateUserLoginAttempts(
     id: string,
-    loginAttempts: number,
-    lockUntil: Date | null,
+    pinAttempts: number,
+    pinLockedUntil: Date | null,
   ) {
     await prisma.user.update({
       where: { id },
-      data: { loginAttempts, lockUntil },
+      data: { pinAttempts, pinLockedUntil },
     });
   },
 

@@ -3,6 +3,9 @@
 import "dotenv/config";
 import { defineConfig } from "prisma/config";
 
+// Use library engine for Node.js environments (not Accelerate)
+process.env.PRISMA_CLIENT_ENGINE_TYPE = "library";
+
 export default defineConfig({
   schema: "prisma/schema.prisma",
   migrations: {

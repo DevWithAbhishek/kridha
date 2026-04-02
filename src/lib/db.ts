@@ -9,7 +9,9 @@ export const prisma =
     log: ["error", "warn"],
   });
 
-if (process.env.NODE_ENV !== "production") globalForPrisma.prisma = prisma;
+if (process.env.NODE_ENV !== "production") {
+  globalForPrisma.prisma = prisma;
+}
 
 // Without this: every Vercel function invocation opens a new DB connection.
 // Neon free tier has a connection limit. This singleton reuses the connection.

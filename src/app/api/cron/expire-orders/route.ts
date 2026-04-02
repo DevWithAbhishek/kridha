@@ -17,6 +17,7 @@ export async function POST() {
   });
 
   let expired = 0;
+
   for (const sub of stale) {
     await prisma.$transaction([
       prisma.subOrder.update({
@@ -33,7 +34,7 @@ export async function POST() {
         },
       }),
       // Restore stock for each order item (INV-01)
-      ...sub.orderItems.map((oi) =>
+      ...sub.orderItems.map((oi: { productId: string; quantity: number }) =>
         prisma.product.update({
           where: { id: oi.productId },
           data: { available: { increment: oi.quantity } },

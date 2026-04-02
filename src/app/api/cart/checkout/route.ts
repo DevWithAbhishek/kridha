@@ -3,14 +3,12 @@ import { ERR } from "@/lib/errors";
 import { getUser } from "@/lib/get-user";
 import { handleError } from "@/lib/handleError";
 import { orderService } from "@/services/order.service";
-import { handler } from "next/dist/build/templates/app-page";
 import { NextRequest, NextResponse } from "next/server";
 
 export async function POST(req: NextRequest) {
   try {
     const user = getUser(req);
 
-    // Find active CartSession — server reads state, client sends nothing
     const cart = await prisma.cartSession.findFirst({
       where: { userid: user.userId, expiresAt: { gt: new Date() } },
     });
@@ -23,15 +21,25 @@ export async function POST(req: NextRequest) {
         success: true,
         data: {
           orderId: result.order.id,
-          subOrders: result.subOrders.map((s) => ({
-            id: s.id,
-            shortId: s.shortId,
-            sellerId: s.sellerId,
-            totalAmount: s.totalAmount,
-            advanceAmount: s.advanceAmount,
-            remainingAmount: s.remainingAmount,
-            status: s.status,
-          })),
+          subOrders: result.subOrders.map(
+            (s: {
+              id: string;
+              shortId: string;
+              sellerId: string;
+              totalAmount: number;
+              advanceAmount: number;
+              remainingAmount: number;
+              status: string;
+            }) => ({
+              id: s.id,
+              shortId: s.shortId,
+              sellerId: s.sellerId,
+              totalAmount: s.totalAmount,
+              advanceAmount: s.advanceAmount,
+              remainingAmount: s.remainingAmount,
+              status: s.status,
+            }),
+          ),
           advance: {
             razorpayOrderId: result.razorpayOrderId,
             amount: result.totalAdvance,

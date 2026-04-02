@@ -2,7 +2,7 @@ import { getUser } from "@/lib/get-user";
 import { handleError } from "@/lib/handleError";
 import { UpdateCartItemSchema } from "@/schemas";
 import { cartService } from "@/services/cart.service";
-import { NextRequest, NextResponse, userAgent } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 
 export async function PATCH(
   req: NextRequest,

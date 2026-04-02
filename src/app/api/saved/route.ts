@@ -2,7 +2,6 @@ import { getUser } from "@/lib/get-user";
 import { AddToSavedProductsSchema, GetSavedProductsSchema } from "@/schemas";
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
-import { success } from "zod";
 import { handleError } from "@/lib/handleError";
 import { ERR } from "@/lib/errors";
 

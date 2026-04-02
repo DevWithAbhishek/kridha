@@ -277,7 +277,6 @@ export const productRepo = {
         productStatus: (input.status ?? "ACTIVE") as ProductStatus,
       },
       include: {
-        sellerId,
         deals: {
           where: { status: "ACTIVE", expiresAt: { gt: new Date() } },
           take: 1,

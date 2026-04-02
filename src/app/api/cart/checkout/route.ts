@@ -10,7 +10,7 @@ export async function POST(req: NextRequest) {
     const user = getUser(req);
 
     const cart = await prisma.cartSession.findFirst({
-      where: { userid: user.userId, expiresAt: { gt: new Date() } },
+      where: { userId: user.userId, expiresAt: { gt: new Date() } },
     });
     if (!cart) throw ERR.CART_EMPTY;
 

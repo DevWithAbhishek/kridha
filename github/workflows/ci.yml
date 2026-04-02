@@ -1,0 +1,56 @@
+integration:
+  name: Integration Tests
+  runs-on: ubuntu-latest
+
+  services:
+    postgres:
+      image: postgis/postgis:16-3.4
+      env:
+        POSTGRES_DB: kridha_test
+        POSTGRES_USER: kridha
+        POSTGRES_PASSWORD: secret
+      ports:
+        - 5432/tcp
+      options: >-
+        --health-cmd pg_isready
+        --health-interval 10s
+        --health-timeout 5s
+        --health-retries 5
+
+  steps:
+    - uses: actions/checkout@v4
+
+    - uses: actions/setup-node@v4
+      with:
+        node-version: '20'
+        cache: 'npm'
+
+    - run: npm ci
+    - run: npx prisma generate
+
+    - name: Apply migrations
+      run: npx prisma migrate deploy
+      env:
+        DATABASE_URL: postgresql://kridha:secret@localhost:5432/kridha_test
+
+    - name: Seed test data
+      run: npx prisma db seed
+      env:
+        DATABASE_URL: postgresql://kridha:secret@localhost:5432/kridha_test
+        SEED_ENV: test
+
+    - name: Build app
+      run: npm run build
+
+    - name: Start app
+      run: npm run start &
+
+    - name: Wait for server
+      run: npx wait-on http://localhost:3000/api/health --timeout 30000
+
+    - run: npm run test:integration
+      env:
+        TEST_BASE_URL: http://localhost:3000
+        DATABASE_URL: postgresql://kridha:secret@localhost:5432/kridha_test
+        JWT_SECRET: test-jwt-secret-32-chars-minimum-x
+        RAZORPAY_WEBHOOK_SECRET: test-webhook-secret

@@ -487,38 +487,48 @@ export const VerifyOtpSchema = z.object({
     .regex(/^[0-9]{4}$/, "OTP must be exactly 4 digits"),
 });
 
-// ── 11. Reviews ───────────────────────────────────────────────────────────
-
-export const GetReviewsSchema = z.object({
-  productId: z.cuid().optional(),
-  sellerId: z.cuid().optional(),
-  page: z.coerce.number().positive().optional().default(1),
-  limit: z.coerce.number().positive().max(50).optional().default(20),
+// ── 11. Reviews & Notifications
+export const AddStoreImagesSchema = z.object({
+  images: z
+    .array(
+      z.object({
+        url: z.string().url(),
+        publicId: z.string().min(1).max(200),
+      }),
+    )
+    .min(1)
+    .max(5),
 });
-
-export const AddReviewSchema = z.object({
-  // subOrderId not orderId — reviews link to SubOrder (ER diagram decision)
-  subOrderId: z.cuid(),
-  productId: z.cuid(),
-  rating: z.number().min(1).max(5),
-  comment: z.string().max(500).optional(),
-});
-
-export const UpdateReviewSchema = z.object({
-  rating: z.number().min(1).max(5).optional(),
-  comment: z.string().max(500).optional(),
-});
-
-// ── 12. Notifications ─────────────────────────────────────────────────────
+export type AddStoreImagesInput = z.infer<typeof AddStoreImagesSchema>;
 
 export const GetNotificationsSchema = z.object({
   status: z.enum(["READ", "UNREAD"]).optional(),
-  page: z.coerce.number().positive().optional().default(1),
-  limit: z.coerce.number().positive().max(50).optional().default(20),
-  sortBy: z
-    .enum(["created_asc", "created_desc"])
-    .optional()
-    .default("created_desc"),
+  page: z.coerce.number().int().min(1).default(1),
+  limit: z.coerce.number().int().min(1).max(50).default(20),
+  sortBy: z.enum(["created_asc", "created_desc"]).default("created_desc"),
+});
+
+export const AddReviewSchema = z.object({
+  subOrderId: z.string().cuid(),
+  productId: z.string().cuid(),
+  rating: z.number().int().min(1).max(5),
+  comment: z.string().max(1000).optional(),
+});
+
+export const UpdateReviewSchema = z
+  .object({
+    rating: z.number().int().min(1).max(5).optional(),
+    comment: z.string().max(1000).optional(),
+  })
+  .refine((d) => d.rating !== undefined || d.comment !== undefined, {
+    message: "At least one of rating or comment must be provided",
+  });
+
+export const GetReviewsSchema = z.object({
+  productId: z.string().cuid().optional(),
+  sellerId: z.string().cuid().optional(),
+  page: z.coerce.number().int().min(1).default(1),
+  limit: z.coerce.number().int().min(1).max(50).default(20),
 });
 
 // ── Type exports ──────────────────────────────────────────────────────────

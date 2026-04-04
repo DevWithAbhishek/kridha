@@ -19,6 +19,12 @@ export const authRepo = {
     });
   },
 
+  async findSeller(storeName: string, street: string) {
+    return await prisma.sellerProfile.findFirst({
+      where: { storeName: storeName, street: street },
+    });
+  },
+
   async findUserByPhone(phone: string) {
     return await prisma.user.findUnique({
       where: { phone },
@@ -46,8 +52,14 @@ export const authRepo = {
   },
 
   async findOtpRequest(phone: string, otpHash: string) {
-    return await prisma.otpRequest.findFirst({
-      where: { phone, otpHash, expiresAt: { gt: new Date() } },
+    return prisma.otpRequest.findFirst({
+      where: {
+        phone: phone,
+        otpHash,
+        usedAt: null,
+        expiresAt: { gt: new Date() },
+        attempts: { lt: 3 },
+      },
       orderBy: { createdAt: "desc" },
     });
   },

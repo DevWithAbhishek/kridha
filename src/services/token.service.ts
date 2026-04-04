@@ -5,9 +5,9 @@
 
 import jwt from "jsonwebtoken";
 import crypto from "crypto";
-import { prisma } from "@/lib/db";
 import { Role } from "@prisma/client";
 import { ERR } from "@/lib/errors";
+import { tokenRepo } from "@/repo/token.repo";
 
 interface JwtPayload {
   userId: string;
@@ -18,87 +18,64 @@ function hashToken(raw: string): string {
   return crypto.createHash("sha256").update(raw).digest("hex");
 }
 
+function createJwtToken(userId: string, roles: Role[]) {
+  return jwt.sign(
+    { userId, roles } satisfies JwtPayload,
+    process.env.JWT_SECRET!,
+    { expiresIn: "15m" },
+  );
+}
+
 export const tokenService = {
   async issueTokens(userId: string, roles: Role[]) {
-    const accessToken = jwt.sign(
-      { userId, roles } satisfies JwtPayload,
-      process.env.JWT_SECRET!,
-      { expiresIn: "15m" },
-    );
-
+    const accessToken = createJwtToken(userId, roles);
     const raw = crypto.randomBytes(64).toString("hex");
     const family = crypto.randomUUID();
 
-    await prisma.refreshToken.create({
-      data: {
-        userId,
-        tokenHash: hashToken(raw),
-        family,
-        expiresAt: new Date(Date.now() + 7 * 24 * 3_600_000),
-        revoked: false,
-      },
-    });
-
+    await tokenRepo.createRefreshToken(
+      userId,
+      family,
+      hashToken(raw),
+      new Date(Date.now() + 7 * 24 * 3_600_000),
+    );
     return { accessToken, refreshToken: raw };
   },
 
   async rotate(raw: string) {
     const hash = hashToken(raw);
-    const stored = await prisma.refreshToken.findUnique({
-      where: { tokenHash: hash },
-      include: { user: { select: { id: true, roles: true } } },
-    });
-
+    const stored = await tokenRepo.getStoredTokenByHash(hash);
     if (!stored || stored.expiresAt < new Date()) {
       throw ERR.REFRESH_TOKEN_INVALID;
     }
-
     if (stored.revoked) {
       // Theft detected — revoke entire family
-      await prisma.refreshToken.updateMany({
-        where: { family: stored.family },
-        data: { revoked: true },
-      });
+      await tokenRepo.revokeTokenByFamily(stored.family);
       throw ERR.REFRESH_TOKEN_INVALID;
     }
 
     // Revoke used token, issue new one in same family
-    await prisma.refreshToken.update({
-      where: { tokenHash: hash },
-      data: { revoked: true },
-    });
+    await tokenRepo.revokeTokenByHash(hash);
 
     const newRaw = crypto.randomBytes(64).toString("hex");
-    await prisma.refreshToken.create({
-      data: {
-        userId: stored.userId,
-        tokenHash: hashToken(newRaw),
-        family: stored.family, // same family — rotation chain
-        expiresAt: new Date(Date.now() + 7 * 24 * 3_600_000),
-        revoked: false,
-      },
-    });
-
-    const accessToken = jwt.sign(
-      { userId: stored.userId, roles: stored.user.roles } satisfies JwtPayload,
-      process.env.JWT_SECRET!,
-      { expiresIn: "15m" },
+    await tokenRepo.createRefreshToken(
+      stored.userId,
+      stored.family,
+      hashToken(newRaw),
+      new Date(Date.now() + 7 * 24 * 3_600_000),
     );
+    const accessToken = createJwtToken(stored.userId, stored.user.roles);
 
-    return { accessToken, refreshToken: newRaw };
+    const storedLang = await tokenRepo.getPreferredLangForNewToken();
+    const lang = storedLang?.user?.preferredLang ?? "hi";
+    
+    return { accessToken, refreshToken: newRaw , lang };
   },
 
   async revokeOne(raw: string): Promise<void> {
-    await prisma.refreshToken.updateMany({
-      where: { tokenHash: hashToken(raw) },
-      data: { revoked: true },
-    });
+    await tokenRepo.revokeTokenByHash(hashToken(raw));
   },
 
   async revokeAll(userId: string): Promise<void> {
-    await prisma.refreshToken.updateMany({
-      where: { userId },
-      data: { revoked: true },
-    });
+    await tokenRepo.revokeTokenByUserId(userId);
   },
 };

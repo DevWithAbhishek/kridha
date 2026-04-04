@@ -1,8 +1,3 @@
-// Phone + PIN only. No Truecaller, no Google OAuth.
-// Silent signup — PHONE_EXISTS never thrown (enumeration prevention).
-// PIN lockout after 5 failed attempts.
-// ─────────────────────────────────────────────────────────────────────────────
-
 import argon2 from "argon2";
 import crypto from "crypto";
 import { prisma } from "@/lib/db";
@@ -16,47 +11,45 @@ import type {
   ResetPinInput,
   RegisterAsSellerInput,
 } from "@/schemas";
+import { authRepo } from "@/repo/auth.repo";
+
+async function hashByArgon(raw: string) {
+  return await argon2.hash(raw);
+}
+
+async function verifyByArgon(hash: string, raw: string) {
+  return await argon2.verify(hash, raw);
+}
+
+function hashByCrypto(raw: string) {
+  return crypto.createHash("sha256").update(raw).digest("hex");
+}
 
 export const authService = {
   async signup(input: SignupInput): Promise<void> {
     // Silent — same 201 whether phone exists or not (INV-07 / enumeration prevention)
-    const existing = await prisma.user.findUnique({
-      where: { phone: input.phone },
-    });
+    const existing = await authRepo.findUserByPhone(input.phone);
     if (existing) return;
-
-    const pin = await argon2.hash(input.pin);
-    await prisma.user.create({
-      data: { phone: input.phone, pin, name: input.name, roles: ["BUYER"] },
-    });
+    const pin = await hashByArgon(input.pin);
+    await authRepo.createUser(input.phone, pin, input.name);
   },
 
   async login(input: LoginInput) {
-    const user = await prisma.user.findUnique({
-      where: { phone: input.phone },
-    });
+    const user = await authRepo.findUserByPhone(input.phone);
     // Same error for wrong phone and wrong PIN — prevents enumeration
     if (!user || !user.pin) throw ERR.INVALID_CREDENTIALS;
     if (user.pinLockedUntil && user.pinLockedUntil > new Date())
       throw ERR.PIN_LOCKED;
 
-    const valid = await argon2.verify(user.pin, input.pin);
+    const valid = await verifyByArgon(user.pin, input.pin);
     if (!valid) {
       const attempts = user.pinAttempts + 1;
       const lockUntil =
         attempts >= 5 ? new Date(Date.now() + 10 * 60_000) : null;
-      await prisma.user.update({
-        where: { id: user.id },
-        data: { pinAttempts: attempts, pinLockedUntil: lockUntil },
-      });
+      await authRepo.updateUserLoginAttempts(user.id, attempts, lockUntil);
       throw ERR.INVALID_CREDENTIALS;
     }
-
-    await prisma.user.update({
-      where: { id: user.id },
-      data: { pinAttempts: 0, pinLockedUntil: null },
-    });
-
+    await authRepo.updateUserLoginAttempts(user.id, 0, null);
     const tokens = await tokenService.issueTokens(user.id, user.roles);
     return {
       tokens,
@@ -70,42 +63,26 @@ export const authService = {
   },
 
   async resetPinRequest(input: ResetPinRequestInput): Promise<void> {
-    const user = await prisma.user.findUnique({
-      where: { phone: input.phone },
-    });
+    const user = await authRepo.findUserByPhone(input.phone);
     if (!user) throw ERR.PHONE_NOT_FOUND;
 
     const otp = Math.floor(1000 + Math.random() * 9000).toString();
-    const otpHash = crypto.createHash("sha256").update(otp).digest("hex");
-
-    await prisma.otpRequest.create({
-      data: {
-        phone: input.phone,
-        otpHash,
-        expiresAt: new Date(Date.now() + 10 * 60_000),
-      },
-    });
+    const otpHash = hashByCrypto(otp);
+    await authRepo.createResetOtpRequest(
+      user.phone,
+      otpHash,
+      new Date(Date.now() + 10 * 60_000),
+    );
 
     // Phase 2: send via Twilio. Dev: log to console.
     console.log(`[DEV OTP] phone=${input.phone} otp=${otp}`);
   },
 
   async resetPin(input: ResetPinInput): Promise<void> {
-    const otpHash = crypto.createHash("sha256").update(input.otp).digest("hex");
-    const record = await prisma.otpRequest.findFirst({
-      where: {
-        phone: input.phone,
-        otpHash,
-        usedAt: null,
-        expiresAt: { gt: new Date() },
-        attempts: { lt: 3 },
-      },
-      orderBy: { createdAt: "desc" },
-    });
-
+    const otpHash = hashByCrypto(input.otp);
+    const record = await authRepo.findOtpRequest(input.phone, otpHash);
     if (!record) throw ERR.INVALID_OTP;
-
-    const newPin = await argon2.hash(input.newPin);
+    const newPin = await hashByArgon(input.newPin);
 
     await prisma.$transaction([
       prisma.otpRequest.update({
@@ -125,9 +102,7 @@ export const authService = {
   },
 
   async registerAsSeller(userId: string, input: RegisterAsSellerInput) {
-    const conflict = await prisma.sellerProfile.findFirst({
-      where: { storeName: input.storeName, street: input.street },
-    });
+    const conflict = await authRepo.findSeller(input.storeName, input.street);
     if (conflict) throw ERR.STORE_EXISTS;
 
     await prisma.$transaction(async (tx) => {
@@ -155,10 +130,8 @@ export const authService = {
         data: { roles: { push: "SELLER" } },
       });
     });
-
     // Create default pickup windows after transaction
     await pickupWindowService.createDefaults(userId);
-
     return { status: "PENDING", bankVerified: false };
   },
 };

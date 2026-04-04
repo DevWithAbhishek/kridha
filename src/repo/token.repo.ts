@@ -1,6 +1,20 @@
 import { prisma } from "@/lib/db";
 
 export const tokenRepo = {
+  async getStoredTokenByHash(tokenHash: string) {
+    return await prisma.refreshToken.findUnique({
+      where: { tokenHash },
+      include: { user: { select: { id: true, roles: true } } },
+    });
+  },
+
+  async getPreferredLangForNewToken() {
+    return await prisma.refreshToken.findFirst({
+      where: { revoked: false },
+      include: { user: { select: { preferredLang: true } } },
+      orderBy: { createdAt: "desc" },
+    });
+  },
   async createRefreshToken(
     userId: string,
     family: string,
@@ -17,21 +31,14 @@ export const tokenRepo = {
     });
   },
 
-  async revokeRefreshTokenByFamily(family: string) {
+  async revokeTokenByFamily(family: string) {
     await prisma.refreshToken.updateMany({
-      where: { family },
+      where: { family: family },
       data: { revoked: true },
     });
   },
 
-  async revokeOldTokenById(id: string) {
-    await prisma.refreshToken.update({
-      where: { id },
-      data: { revoked: true },
-    });
-  },
-
-  async revokeTokenByTokenHash(tokenHash: string) {
+  async revokeTokenByHash(tokenHash: string) {
     await prisma.refreshToken.updateMany({
       where: { tokenHash },
       data: { revoked: true },
@@ -42,13 +49,6 @@ export const tokenRepo = {
     await prisma.refreshToken.updateMany({
       where: { userId },
       data: { revoked: true },
-    });
-  },
-
-  async getStoredTokenByTokenHash(tokenHash: string) {
-    return await prisma.refreshToken.findUnique({
-      where: { tokenHash },
-      include: { user: true },
     });
   },
 };

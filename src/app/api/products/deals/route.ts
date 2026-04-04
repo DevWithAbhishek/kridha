@@ -11,7 +11,7 @@ export async function GET(req:NextRequest) {
       );
 
       //Reuse findNearBy with dealActive: true - no seller execution on this feed
-      const result = await productRepo.findNearBy({
+      const result = await productRepo.findNearby({
         ...q,
           dealActive: true,
       }, undefined);

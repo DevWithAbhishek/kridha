@@ -6,6 +6,7 @@ import { NextRequest, NextResponse } from "next/server";
 import jwt from "jsonwebtoken";
 import { Ratelimit } from "@upstash/ratelimit";
 import { Redis } from "@upstash/redis";
+import { logger } from "@/lib/logger";
 
 interface JwtPayload {
   userId: string;
@@ -72,6 +73,10 @@ export async function middleware(req: NextRequest) {
     const { success, remaining } = await limiter.limit(ip);
 
     if (!success) {
+      logger.warn(
+        { ip, path: pathname, action: "rate.limit" },
+        "Rate limit exceeded",
+      );
       return NextResponse.json(
         {
           success: false,

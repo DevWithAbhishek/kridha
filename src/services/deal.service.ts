@@ -105,7 +105,7 @@ export const dealService = {
   async listActiveDealsNearby(lat: number, lng: number, radius: number) {
     // Reuses productRepo.findNearBy with deal active filter
     const { productRepo: repo } = await import('@/repo/product.repo');
-    return repo.findNearBy({
+    return repo.findNearby({
       lat,
       lng,
       radius,

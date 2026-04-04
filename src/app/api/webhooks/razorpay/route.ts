@@ -3,6 +3,7 @@ import crypto from "crypto";
 import { prisma } from "@/lib/db";
 import { notificationService } from "@/services/notification.service";
 import { validateTransition } from "@/lib/state-machine";
+import { logger } from "@/lib/logger";
 
 // ALWAYS returns 200 — Razorpay retries on any non-200 (causes double-processing)
 // Four rules: always 200, HMAC verify first, idempotency check, atomic transaction
@@ -155,9 +156,10 @@ export async function POST(req: NextRequest) {
       });
     }
   } catch (err) {
-    // Log but NEVER return non-200 — that triggers Razorpay retry storms
-    console.error("[WEBHOOK] Processing error:", err);
-    // Sentry.captureException(err); // ← uncomment after Sentry setup
+    logger.error(
+      { err, action: "webhook.razorpay" },
+      "Webhook processing error",
+    );
   }
   return NextResponse.json({ received: true }); // Rule 1: always 200
 }

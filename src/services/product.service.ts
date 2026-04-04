@@ -10,7 +10,7 @@ import type {
 
 export const productService = {
   async listNearBy(input: GetProductsInput, userId?: string) {
-    return productRepo.findNearBy(input, userId);
+    return productRepo.findNearby(input, userId);
   },
 
   async getById(id: string) {

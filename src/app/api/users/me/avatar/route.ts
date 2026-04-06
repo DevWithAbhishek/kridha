@@ -6,8 +6,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { handleError } from "@/lib/handleError";
 import { getUser } from "@/lib/get-user";
 import { EditUserAvatarSchema } from "@/schemas";
-import { prisma } from "@/lib/db";
 import { v2 as cloudinary } from "cloudinary";
+import { userService } from "@/services/user.service";
 
 cloudinary.config({
   cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
@@ -19,10 +19,7 @@ export async function POST(req: NextRequest) {
   try {
     const user = getUser(req);
     const body = EditUserAvatarSchema.parse(await req.json());
-    const record = await prisma.user.findUnique({
-      where: { id: user.userId },
-      select: { profileImagePublicId: true },
-    });
+    const record = await userService.getAvatar(user.userId);
 
     // Delete old avatar from Cloudinary if exists
     if (record?.profileImagePublicId) {
@@ -30,12 +27,7 @@ export async function POST(req: NextRequest) {
         .destroy(record.profileImagePublicId)
         .catch(console.error);
     }
-
-    const updated = await prisma.user.update({
-      where: { id: user.userId },
-      data: { profileImageUrl: body.profileImageUrl, profileImagePublicId: body.profileImagePublicId},
-      select: { id: true, profileImageUrl: true },
-    });
+    const updated = await userService.updateAvatar(user.userId, body);
     return NextResponse.json({ success: true, data: { user: updated } });
   } catch (err) {
     return handleError(err);
@@ -45,21 +37,14 @@ export async function POST(req: NextRequest) {
 export async function DELETE(req: NextRequest) {
   try {
     const user = getUser(req);
-    const record = await prisma.user.findUnique({
-      where: { id: user.userId },
-      select: { profileImagePublicId: true },
-    });
-
+    const record = await userService.getAvatar(user.userId);
     if (record?.profileImagePublicId) {
       cloudinary.uploader
         .destroy(record.profileImagePublicId)
         .catch(console.error);
     }
 
-    await prisma.user.update({
-      where: { id: user.userId },
-      data: { profileImageUrl: null, profileImagePublicId: null },
-    });
+    await userService.deleteAvatar(user.userId);
     return NextResponse.json({ success: true, message: "Avatar removed." });
   } catch (err) {
     return handleError(err);

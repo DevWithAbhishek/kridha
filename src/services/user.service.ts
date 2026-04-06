@@ -2,36 +2,39 @@
 // Called from cron expire-orders and order cancel.
 // ─────────────────────────────────────────────────────────────────────────────
 
-import { prisma } from "@/lib/db";
-import { notificationService } from "./notification.service";
+import { userRepo } from "@/repo/user.repo";
+import {
+  EditUserAvatarInput,
+  EditUserProfileInput,
+} from "@/schemas";
 
 export const userService = {
-  async applyNoShowPenalty(buyerId: string): Promise<void> {
-    const buyer = await prisma.user.findUnique({
-      where: { id: buyerId },
-      select: { noShowCount: true, creditBalance: true },
-    });
-    if (!buyer) return;
 
-    const newCount = buyer.noShowCount + 1;
-    const newBalance = parseFloat((buyer.creditBalance - 20).toFixed(2));
-
-    await prisma.user.update({
-      where: { id: buyerId },
-      data: {
-        noShowCount: newCount,
-        creditBalance: newBalance,
-        isFlagged: newCount >= 3,
-      },
-    });
-
-    notificationService.noShowPenalty(buyerId, newCount).catch(console.error);
+  async getUserById(userId: string) {
+    return await userRepo.findUser(userId);
   },
 
-  async applySellerCancellationPenalty(sellerId: string): Promise<void> {
-    await prisma.sellerProfile.update({
-      where: { userId: sellerId },
-      data: { reliabilityScore: { decrement: 15 } },
-    });
+  async updateUser(userId: string, body: EditUserProfileInput) {
+    return await userRepo.updateUserProfile(userId, body);
+  },
+
+  async getActiveOrders(userId: string) {
+    return await userRepo.findActiveOrder(userId);
+  },
+
+  async deleteUser(userId: string) {
+    await userRepo.softDeleteUser(userId);
+  },
+
+  async getAvatar(userId: string) {
+    return await userRepo.findUserAvatar(userId);
+  },
+
+  async updateAvatar(userId: string, avatar: EditUserAvatarInput) {
+    await userRepo.updateUserAvatar(userId, avatar);
+  },
+
+  async deleteAvatar(userId: string) {
+    await userRepo.deleteAvatar(userId);
   },
 };

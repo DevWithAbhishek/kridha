@@ -6,6 +6,7 @@ import { ERR } from "@/lib/errors";
 import { Role } from "@prisma/client";
 import { v2 as cloudinary } from "cloudinary";
 import { Prisma } from "@prisma/client";
+import { AddStoreImagesSchema } from "@/schemas";
 
 cloudinary.config({
   cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
@@ -25,31 +26,33 @@ export async function DELETE(req: NextRequest, { params }: ImageParams) {
     const { publicId: encoded } = await params;
     const publicId = decodeURIComponent(encoded);
 
-    const profile = await prisma.sellerProfile.findUnique({
-      where: { userId: user.userId },
-      select: { storeImages: true },
-    });
-    if (!profile) throw ERR.NOT_FOUND("SellerProfile");
+    await prisma.$transaction(async (tx) => {
+      const profile = await tx.sellerProfile.findUnique({
+        where: { userId: user.userId },
+        select: { storeImages: true },
+      });
 
-    // ✅ SAFE READ
-    const raw = profile.storeImages;
+      if (!profile) throw ERR.NOT_FOUND("SellerProfile");
 
-    const current: StoreImage[] = Array.isArray(raw)
-      ? (raw as unknown as StoreImage[])
-      : [];
+      const raw = profile.storeImages;
 
-    if (!current.some((img) => img.publicId === publicId)) {
-      throw ERR.NOT_FOUND("Store image");
-    }
+      const current: StoreImage[] = Array.isArray(raw)
+        ? (raw as unknown as StoreImage[])
+        : [];
 
-    const filtered = current.filter((img) => img.publicId !== publicId);
+      // optional: make delete idempotent
+      const exists = current.some((img) => img.publicId === publicId);
+      if (!exists) return;
 
-    // ✅ SAFE WRITE
-    await prisma.sellerProfile.update({
-      where: { userId: user.userId },
-      data: {
-        storeImages: filtered as unknown as Prisma.InputJsonValue,
-      },
+      const filtered = current.filter((img) => img.publicId !== publicId);
+      const parsed = AddStoreImagesSchema.parse(filtered);
+
+      await tx.sellerProfile.update({
+        where: { userId: user.userId },
+        data: {
+          storeImages: parsed as Prisma.InputJsonValue,
+        },
+      });
     });
 
     cloudinary.uploader

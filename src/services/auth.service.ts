@@ -134,4 +134,8 @@ export const authService = {
     await pickupWindowService.createDefaults(userId);
     return { status: "PENDING", bankVerified: false };
   },
+
+  async getUpdatedUser(userId: string) {
+    return authRepo.findUpdatedUser(userId);
+  }
 };

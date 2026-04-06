@@ -31,6 +31,13 @@ export const authRepo = {
     });
   },
 
+  async findUpdatedUser(userId: string) {
+    return await prisma.user.findUnique({
+      where: { id: userId },
+      select: { roles: true, preferredLang: true },
+    });
+  },
+
   async createUser(phone: string, pinHash: string, name: string) {
     await prisma.user.create({
       data: {

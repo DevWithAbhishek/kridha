@@ -6,6 +6,7 @@ import { prisma } from "@/lib/db";
 import { ERR } from "@/lib/errors";
 import { Role } from "@prisma/client";
 import { Prisma } from "@prisma/client";
+import { sellerService } from "@/services/seller.service";
 
 const MAX_STORE_IMAGES = 5;
 interface StoreImage {
@@ -16,10 +17,7 @@ interface StoreImage {
 export async function GET(req: NextRequest) {
   try {
     const user = requireRole(req, Role.SELLER);
-    const profile = await prisma.sellerProfile.findUnique({
-      where: { userId: user.userId },
-      select: { storeImages: true },
-    });
+    const profile = await sellerService.getSellerStoreImages(user.userId);
     if (!profile) throw ERR.NOT_FOUND("SellerProfile");
     return NextResponse.json({
       success: true,
@@ -34,31 +32,34 @@ export async function POST(req: NextRequest) {
   try {
     const user = requireRole(req, Role.SELLER);
     const body = AddStoreImagesSchema.parse(await req.json());
-    const profile = await prisma.sellerProfile.findUnique({
-      where: { userId: user.userId },
-      select: { storeImages: true },
-    });
-    if (!profile) throw ERR.NOT_FOUND("SellerProfile");
+    
+    const updated = await prisma.$transaction(async (tx) => {
+      const profile = await tx.sellerProfile.findUnique({
+        where: { userId: user.userId },
+        select: { storeImages: true },
+      });
+      if (!profile) throw ERR.NOT_FOUND("SellerProfile");
 
-    const raw = profile.storeImages;
+      const raw = profile.storeImages;
+      const current: StoreImage[] = Array.isArray(raw)
+        ? (raw as unknown as StoreImage[])
+        : [];
+      const merged = [...current, ...body.images];
 
-    const current: StoreImage[] = Array.isArray(raw)
-      ? (raw as unknown as StoreImage[])
-      : [];
-
-    if (current.length + body.images.length > MAX_STORE_IMAGES) {
-      throw ERR.STORE_IMAGE_LIMIT;
-    }
-
-    const updated = await prisma.sellerProfile.update({
-      where: { userId: user.userId },
-      data: {
-        storeImages: [
-          ...current,
-          ...body.images,
-        ] as unknown as Prisma.InputJsonValue,
-      },
-      select: { storeImages: true },
+      const unique = Array.from(
+        new Map(merged.map((img) => [img.url, img])).values(),
+      );
+      if (unique.length > MAX_STORE_IMAGES) {
+        throw ERR.STORE_IMAGE_LIMIT;
+      }
+      const parsed = AddStoreImagesSchema.parse(unique);
+      return tx.sellerProfile.update({
+        where: { userId: user.userId },
+        data: {
+          storeImages: parsed as Prisma.InputJsonValue,
+        },
+        select: { storeImages: true },
+      });
     });
 
     return NextResponse.json(

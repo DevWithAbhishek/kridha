@@ -34,12 +34,14 @@ const nextConfig: NextConfig = {
   // ← Minimal but important addition
   experimental: {
     cpus: 1, // Limits build to 1 CPU core (prevents OOM/hang on Hobby)
+    optimizeCss: true,
   },
   async headers() {
     return [{ source: "/:path*", headers: securityHeaders }];
   },
   images: {
     remotePatterns: [{ hostname: "res.cloudinary.com" }],
+    formats: ["image/avif", "image/webp"],
   },
 };
 

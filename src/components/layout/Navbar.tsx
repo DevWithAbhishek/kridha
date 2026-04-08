@@ -6,7 +6,7 @@ import Link from 'next/link';
 import { Menu } from 'lucide-react';
 import { useState } from 'react';
 import { LanguageToggle } from '@/components/shared/LanguageToggle';
-import { ThemeToggle } from '../shared/ThemeToggle';
+import { ThemeToggle } from '@/components/shared/ThemeToggle';
 import { Button } from '@/components/ui/Button';
 
 export function Navbar() {

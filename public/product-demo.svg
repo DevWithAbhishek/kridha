@@ -1,0 +1,6 @@
+<svg width="120" height="120" viewBox="0 0 200 200" xmlns="http://www.w3.org/2000/svg">
+<circle cx="100" cy="100" r="90" fill="#E9C24A"/>
+<text x="100" y="110" text-anchor="middle" font-size="22" fill="black">
+Product
+</text>
+</svg>

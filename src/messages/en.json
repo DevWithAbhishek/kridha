@@ -1,0 +1,122 @@
+{
+  "nav": {
+    "home": "Home",
+    "products": "Products",
+    "cart": "Cart",
+    "login": "Login",
+    "signup": "Sign Up",
+    "logout": "Logout",
+    "dashboard": "Dashboard",
+    "seller_dashboard": "Seller Dashboard"
+  },
+  "hero": {
+    "headline": "Fresh groceries at your door",
+    "subheadline": "Direct from UP farmers, affordable",
+    "cta_buyer": "Start shopping",
+    "cta_seller": "Become a seller",
+    "badge": "UP farmers' marketplace"
+  },
+  "how": {
+    "title": "How it works",
+    "step1_title": "Browse products",
+    "step1_desc": "Fresh from local farmers",
+    "step2_title": "Place order",
+    "step2_desc": "At the best prices",
+    "step3_title": "Get delivered",
+    "step3_desc": "Within 24 hours"
+  },
+  "features": {
+    "title": "Why Kridha",
+    "f1_title": "Direct from farmers",
+    "f1_desc": "No middlemen, lower prices",
+    "f2_title": "Always fresh",
+    "f2_desc": "Picked today, delivered tomorrow",
+    "f3_title": "Easy payment",
+    "f3_desc": "Cash or online both accepted",
+    "f4_title": "Trusted service",
+    "f4_desc": "Thousands of happy customers"
+  },
+  "why": {
+    "title": "Why choose us",
+    "reason1": "Farmers earn more directly",
+    "reason2": "You save on middlemen markup",
+    "reason3": "Always fresh and pure produce",
+    "reason4": "Fast delivery, no hidden charges"
+  },
+  "deals": {
+    "title": "Today's deals",
+    "subtitle": "Limited time, best prices",
+    "see_all": "View all"
+  },
+  "auth": {
+    "login": "Login",
+    "signup": "Create account",
+    "phone": "Mobile number",
+    "pin": "4-digit PIN",
+    "confirm_pin": "Confirm PIN",
+    "name": "Your name",
+    "login_btn": "Login",
+    "signup_btn": "Sign up",
+    "forgot_pin": "Forgot PIN?",
+    "create_account": "Create new account",
+    "toggle_signup": "New? Sign up",
+    "toggle_login": "Already have account? Login"
+  },
+  "errors": {
+    "INVALID_CREDENTIALS": "Wrong number or PIN",
+    "PIN_LOCKED": "Too many attempts, try later",
+    "VALIDATION_FAILED": "Invalid information",
+    "INTERNAL_ERROR": "Something went wrong, retry",
+    "PHONE_NOT_FOUND": "Number not registered",
+    "INSUFFICIENT_STOCK": "Out of stock"
+  },
+  "common": {
+    "loading": "Loading",
+    "error": "Error occurred",
+    "retry": "Try again",
+    "save": "Save",
+    "cancel": "Cancel",
+    "delete": "Delete",
+    "confirm": "Confirm",
+    "back": "Back",
+    "search": "Search",
+    "filter": "Filter",
+    "sort": "Sort",
+    "submit": "Submit"
+  },
+  "order": {
+    "title": "Order",
+    "status_pending": "Pending",
+    "status_confirmed": "Confirmed",
+    "status_awaiting": "Ready to ship",
+    "status_otp": "Awaiting OTP",
+    "status_completed": "Delivered",
+    "status_cancelled": "Cancelled",
+    "otp_display": "OTP: {{otp}}",
+    "otp_show_seller": "Show seller"
+  },
+  "product": {
+    "add_cart": "Add to cart",
+    "quantity": "Quantity",
+    "unit_price": "Price per unit",
+    "total": "Total price",
+    "min_order": "Min order",
+    "deal_ends": "Deal ends",
+    "in_stock": "In stock",
+    "out_stock": "Out of stock",
+    "reviews": "Reviews"
+  },
+  "cart": {
+    "title": "Your cart",
+    "empty": "Cart is empty",
+    "checkout": "Checkout",
+    "total": "Total price",
+    "advance": "Advance payment",
+    "save_later": "Buy later"
+  },
+  "footer": {
+    "tagline": "Farmers' trusted marketplace",
+    "rights": "© 2026 Kridha. All rights reserved.",
+    "links_title": "Links"
+  }
+}

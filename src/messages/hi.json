@@ -7,7 +7,9 @@
     "signup": "साइन अप",
     "logout": "लॉगआउट",
     "dashboard": "डैशबोर्ड",
-    "seller_dashboard": "विक्रेता डैशबोर्ड"
+    "seller_dashboard": "विक्रेता डैशबोर्ड",
+    "how_it_works": "कैसे काम करता है",
+    "get_started": "शुरू करें"
   },
   "hero": {
     "headline": "किराना सीधा घर तक",

@@ -7,7 +7,9 @@
     "signup": "Sign Up",
     "logout": "Logout",
     "dashboard": "Dashboard",
-    "seller_dashboard": "Seller Dashboard"
+    "seller_dashboard": "Seller Dashboard",
+    "how_it_works": "How It Works",
+    "get_started": "Get Started"
   },
   "hero": {
     "headline": "Fresh groceries at your door",

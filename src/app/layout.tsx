@@ -1,4 +1,4 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import { Inter } from "next/font/google";
 import "./globals.css";
 // Providers wrapper (see below implementation)
@@ -8,15 +8,20 @@ import { Providers } from "@/components/Providers";
 export const metadata: Metadata = {
   title: "Kridha — किराना का भरोसेमंद साथी",
   description: "B2B+B2C self-pickup marketplace for kirana owners and suppliers in UP",
-  themeColor: "#2A9D8F",
   manifest: "/manifest.json",
-  viewport: "width=device-width, initial-scale=1, viewport-fit=cover",
   appleWebApp: {
     capable: true,
     statusBarStyle: "default",
     title: "Kridha",
   },
 };
+
+export const viewport: Viewport = {
+  width: 'device-width',
+  initialScale: 1,
+  viewportFit: 'cover',
+  themeColor: '#2A9D8F'
+}
 
 const inter = Inter({
   subsets: ["latin"],

@@ -41,6 +41,14 @@ const Button = forwardRef<HTMLButtonElement, ButtonProps>(
     ({ className, variant, size, loading, disabled, leftIcon, rightIcon, asChild = false, children, ...props }, ref) => {
         const Comp = asChild ? Slot : 'button';
         const isDisabled = disabled || loading;
+        const content = (
+            <>
+                {loading && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
+                {!loading && leftIcon && <span className="mr-2">{leftIcon}</span>}
+                {children}
+                {!loading && rightIcon && <span className="ml-2">{rightIcon}</span>}
+            </>
+        );
 
         return (
             <Comp
@@ -53,10 +61,7 @@ const Button = forwardRef<HTMLButtonElement, ButtonProps>(
                 })}
                 {...props}
             >
-                {loading && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
-                {!loading && leftIcon && <span className="mr-2">{leftIcon}</span>}
-                {children}
-                {!loading && rightIcon && <span className="ml-2">{rightIcon}</span>}
+                {asChild ? children : content}
             </Comp>
         );
     }

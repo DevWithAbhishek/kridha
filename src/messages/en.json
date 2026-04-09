@@ -73,7 +73,17 @@
     "VALIDATION_FAILED": "Invalid information",
     "INTERNAL_ERROR": "Something went wrong, retry",
     "PHONE_NOT_FOUND": "Number not registered",
-    "INSUFFICIENT_STOCK": "Out of stock"
+    "INSUFFICIENT_STOCK": "Out of stock",
+    "PHONE_REQUIRED": "Enter phone number",
+    "PHONE_LENGTH": "Enter a 10-digit phone number",
+    "PHONE_INVALID": "Only numbers are allowed",
+    "PIN_REQUIRED": "Enter PIN",
+    "PIN_LENGTH": "Enter a 4-digit PIN",
+    "PIN_INVALID": "Only numbers are allowed",
+    "PIN_MISMATCH": "PINs do not match",
+    "NAME_REQUIRED": "Enter your name",
+    "NAME_TOO_SHORT": "Name must be at least 3 characters",
+    "NAME_TOO_LONG": "Name is too long"
   },
   "common": {
     "loading": "Loading",

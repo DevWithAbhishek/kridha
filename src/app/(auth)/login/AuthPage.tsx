@@ -13,6 +13,7 @@ import Link from 'next/link';
 
 export default function AuthPage() {
     const t = useTranslations('auth');
+    const tError = useTranslations('errors');
     const router = useRouter();
     const searchParams = useSearchParams();
 
@@ -117,7 +118,7 @@ export default function AuthPage() {
     return (
         <div>
 
-            <div className="bg-[var(--color-surface)] dark:bg-surface-dark rounded-modal shadow-modal border border-[var(--color-border)] p-8">
+            <div className="bg-[var(--color-surface)] dark:bg-surface-dark rounded-modal shadow-modal border border-[var(--color-border)] p-8 pt-2">
                 <div className="flex rounded-pill bg-background-subtle p-1 mb-8">
                     <button
                         type="button"
@@ -155,7 +156,11 @@ export default function AuthPage() {
                                 label={t('phone')}
                                 phonePrefix
                                 {...registerLogin('phone')}
-                                error={loginErrors.phone?.message}
+                                error={
+                                    loginErrors.phone?.message
+                                        ? tError(`${loginErrors.phone.message}`)
+                                        : undefined
+                                }
                             />
                             <Input
                                 label={t('pin')}
@@ -163,7 +168,11 @@ export default function AuthPage() {
                                 inputMode="numeric"
                                 maxLength={4}
                                 {...registerLogin('pin')}
-                                error={loginErrors.pin?.message}
+                                error={
+                                    loginErrors.pin?.message
+                                        ? tError(`${loginErrors.pin.message}`)
+                                        : undefined
+                                }
                             />
 
                             <div className="text-right">
@@ -191,13 +200,21 @@ export default function AuthPage() {
                             <Input
                                 label={t('name')}
                                 {...registerSignup('name')}
-                                error={signupErrors.name?.message}
+                                    error={
+                                        signupErrors.name?.message
+                                            ? tError(`${signupErrors.name.message}`)
+                                            : undefined
+                                    }
                             />
                             <Input
                                 label={t('phone')}
                                 phonePrefix
                                 {...registerSignup('phone')}
-                                error={signupErrors.phone?.message}
+                                    error={
+                                        signupErrors.phone?.message
+                                            ? tError(`${signupErrors.phone.message}`)
+                                            : undefined
+                                    }
                             />
                             <Input
                                 label={t('pin')}
@@ -205,7 +222,11 @@ export default function AuthPage() {
                                 inputMode="numeric"
                                 maxLength={4}
                                 {...registerSignup('pin')}
-                                error={signupErrors.pin?.message}
+                                    error={
+                                        signupErrors.pin?.message
+                                            ? tError(`${signupErrors.pin.message}`)
+                                            : undefined
+                                    }
                             />
                             <Input
                                 label={t('confirm_pin')}
@@ -213,7 +234,11 @@ export default function AuthPage() {
                                 inputMode="numeric"
                                 maxLength={4}
                                 {...registerSignup('confirmPin')}
-                                error={signupErrors.confirmPin?.message}
+                                    error={
+                                        signupErrors.confirmPin?.message
+                                            ? tError(`${signupErrors.confirmPin.message}`)
+                                            : undefined
+                                    }
                             />
 
                             {formError && (

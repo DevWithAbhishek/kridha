@@ -73,7 +73,17 @@
     "VALIDATION_FAILED": "जानकारी सही नहीं है",
     "INTERNAL_ERROR": "कुछ गड़बड़ी हुई, दोबारा कोशिश करें",
     "PHONE_NOT_FOUND": "यह नंबर रजिस्टर्ड नहीं है",
-    "INSUFFICIENT_STOCK": "सामान ख़त्म हो गया"
+    "INSUFFICIENT_STOCK": "सामान ख़त्म हो गया",
+    "PHONE_REQUIRED": "फोन नंबर डालें",
+    "PHONE_LENGTH": "10 अंकों का नंबर डालें",
+    "PHONE_INVALID": "सिर्फ नंबर ही डालें",
+    "PIN_REQUIRED": "पिन डालें",
+    "PIN_LENGTH": "4 अंकों का पिन डालें",
+    "PIN_INVALID": "सिर्फ नंबर ही डालें",
+    "PIN_MISMATCH": "दोनों पिन एक जैसे नहीं हैं",
+    "NAME_REQUIRED": "नाम डालें",
+    "NAME_TOO_SHORT": "कम से कम 3 अक्षर डालें",
+    "NAME_TOO_LONG": "नाम बहुत बड़ा है"
   },
   "common": {
     "loading": "लोड हो रहा है",

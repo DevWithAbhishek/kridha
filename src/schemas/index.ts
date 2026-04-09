@@ -48,29 +48,37 @@ export const SignupSchema = z
   .object({
     phone: z
       .string()
-      .length(10)
-      .regex(/^[0-9]{10}$/, "Phone must be exactly 10 digits"),
+      .min(1, "PHONE_REQUIRED")
+      .length(10, "PHONE_LENGTH")
+      .regex(/^[0-9]{10}$/, "PHONE_INVALID"),
     pin: z
       .string()
-      .length(4)
-      .regex(/^[0-9]{4}$/, "PIN must be exactly 4 digits"),
-    confirmPin: z.string().length(4, "PIN must be 4 digits"),
-    name: z.string().min(3).max(40),
+      .min(1, "PIN_REQUIRED")
+      .length(4, "PIN_LENGTH")
+      .regex(/^[0-9]{4}$/, "PIN_LENGTH"),
+    confirmPin: z.string().length(4, "PIN_LENGTH"),
+    name: z
+      .string()
+      .min(1, "NAME_REQUIRED")
+      .min(3, "NAME_TOO_SHORT")
+      .max(40, "NAME_TOO_LONG"),
   })
   .refine((data) => data.pin === data.confirmPin, {
     path: ["confirmPin"],
-    message: "PIN does not match",
+    message: "PIN_MISMATCH",
   });;
 
 export const LoginSchema = z.object({
   phone: z
     .string()
-    .length(10)
-    .regex(/^[0-9]{10}$/, "Phone must be exactly 10 digits"),
+    .min(1, "PHONE_REQUIRED")
+    .length(10, "PHONE_LENGTH")
+    .regex(/^[0-9]{10}$/, "PHONE_INVALID"),
   pin: z
     .string()
-    .length(4)
-    .regex(/^[0-9]{4}$/, "PIN must be exactly 4 digits"),
+    .min(1, "PIN_REQUIRED")
+    .length(4, "PIN_LENGTH")
+    .regex(/^[0-9]{4}$/, "PIN_LENGTH"),
 });
 
 export const RefreshTokenSchema = z.object({

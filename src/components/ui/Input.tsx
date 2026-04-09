@@ -15,7 +15,7 @@ const Input = forwardRef<HTMLInputElement, InputProps>(
         return (
             <div className="w-full">
                 {label && (
-                    <label className="block text-label-md text-text mb-1.5">
+                    <label className="block text-label-md text-[var(--color-text-muted) mb-1.5">
                         {label}
                     </label>
                 )}
@@ -29,7 +29,7 @@ const Input = forwardRef<HTMLInputElement, InputProps>(
                         className={cn(
                             'w-full px-4 py-3 rounded-lg border border-border-DEFAULT bg-surface text-text focus:outline-none focus:border-kridha-primary focus:shadow-focus-primary dark:bg-surface-dark dark:border-border-dark dark:text-text-dark transition-all duration-normal min-h-touch text-body-md',
                             variant === 'error' && 'border-error focus:shadow-focus-error',
-                            phonePrefix && 'border-l-0 rounded-l-none',
+                            phonePrefix && 'border-l-0 rounded-l-none pl-16',
                             className
                         )}
                         ref={ref}

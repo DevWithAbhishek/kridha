@@ -1,12 +1,21 @@
 import Image from 'next/image';
 import { LanguageToggle } from '@/components/shared/LanguageToggle';
 import { ThemeToggle } from '@/components/shared/ThemeToggle';
+import { cookies } from 'next/headers'
+import { redirect } from 'next/navigation'
 
 interface AuthLayoutProps {
     children: React.ReactNode;
 }
 
-export default function AuthLayout({ children }: AuthLayoutProps) {
+export default async function AuthLayout({ children }: AuthLayoutProps) {
+    const store = await cookies()
+    const token = store.get('kridha_access')?.value
+    if (token) {
+        // Don't verify JWT here — just check presence. Middleware will verify.
+        // If cookie exists, assume logged in and redirect.
+        redirect('/')
+    }
     return (
         <div className="min-h-screen bg-[var(--color-bg)] flex flex-col">
             <header className="px-page-x py-4 flex items-center justify-between">

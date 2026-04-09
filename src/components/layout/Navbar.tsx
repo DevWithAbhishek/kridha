@@ -69,6 +69,7 @@ export function Navbar() {
                 </div>
                 <div className="md:hidden flex items-center gap-2">
                     <ThemeToggle />
+                    <LanguageToggle />
                     <button
                         onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
                         className="p-2 rounded-btn hover:bg-kridha-primary/20 transition"
@@ -94,7 +95,6 @@ export function Navbar() {
                             </Link>
                         ))}
                         <div className="flex flex-col gap-3 mt-4">
-                            <LanguageToggle />
                             <Button variant="outline" size="sm" className="w-full">
                                 {t('login')}
                             </Button>

@@ -1,4 +1,7 @@
 // Reads x-user-* headers set by middleware. Used in every protected route.
+// ONLY call from inside /api/* route handlers.
+// Middleware sets x-user-id ONLY for /api/:path* routes.
+// Page Server Components must read cookies() directly.
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { NextRequest } from "next/server";

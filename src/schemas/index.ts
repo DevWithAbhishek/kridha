@@ -56,7 +56,6 @@ export const SignupSchema = z
       .regex(/^[0-9]{4}$/, "PIN must be exactly 4 digits"),
     confirmPin: z.string().length(4, "PIN must be 4 digits"),
     name: z.string().min(3).max(40),
-    role: z.enum(["BUYER", "SELLER"]),
   })
   .refine((data) => data.pin === data.confirmPin, {
     path: ["confirmPin"],

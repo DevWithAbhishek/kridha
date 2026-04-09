@@ -1,7 +1,6 @@
 'use client';
 import { useTranslations } from 'next-intl';
 import Image from 'next/image';
-import { LanguageToggle } from '@/components/shared/LanguageToggle';
 import { Button } from '@/components/ui/Button';
 import Link from 'next/link';
 
@@ -14,10 +13,6 @@ export function HeroSection() {
                 <div className="lg:flex lg:items-center lg:gap-12">
                     {/* Left side */}
                     <div className="lg:w-11/20 mb-12 lg:mb-0">
-                        {/* Language Toggle on mobile */}
-                        <div className="flex justify-end mb-6 lg:hidden">
-                            <LanguageToggle />
-                        </div>
 
                         {/* Badge */}
                         <div className="inline-flex items-center gap-2 bg-kridha-accent/20 border border-kridha-accent/40 text-yellow-800 px-3 py-1.5 rounded-pill text-label-sm font-semibold mb-6">
@@ -72,9 +67,9 @@ export function HeroSection() {
                     {/* Right side - Order mockup */}
                     <div className="lg:w-9/20 hidden sm:block">
                         <div className="bg-[var(--color-surface)] rounded-card shadow-card p-6 border border-[var(--color-border)]">
-                            <div className="flex items-center gap-3 mb-4">
-                                <Image src="/images/kridha_logo_nav.png" alt="Kridha" width={32} height={32} />
+                            <div className="flex flex-col items-center gap-3 mb-4">
                                 <span className="font-semibold">Order #1234</span>
+                                <Image src="/images/kridha_logo_nav.png" alt="Kridha" width={320} height={320} />
                             </div>
                             <div className="space-y-2">
                                 <div className="flex justify-between">

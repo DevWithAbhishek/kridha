@@ -1,4 +1,5 @@
 import { Button } from '@/components/ui/Button';
+import Link from 'next/link';
 
 interface EmptyStateProps {
     icon: React.ReactNode;
@@ -22,7 +23,7 @@ export function EmptyState({ icon, title, subtitle, action }: EmptyStateProps) {
             {action && (
                 action.href ? (
                     <Button variant="primary" size="md" asChild>
-                        <a href={action.href}>{action.label}</a>
+                        <Link href={action.href}>{action.label}</Link>
                     </Button>
                 ) : (
                     <Button variant="primary" size="md" onClick={action.onClick}>

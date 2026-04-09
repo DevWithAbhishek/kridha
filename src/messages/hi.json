@@ -62,7 +62,10 @@
     "forgot_pin": "पिन भूल गए?",
     "create_account": "नया अकाउंट बनाएँ",
     "toggle_signup": "नया हैं? साइन अप करें",
-    "toggle_login": "पहले से सदस्य? लॉगिन करें"
+    "toggle_login": "पहले से सदस्य? लॉगिन करें",
+    "reset_pin": "नया पिन बनाएं",
+    "reset_pin_desc": "अपना नया पिन बनाएं",
+    "send_otp": "अपने नंबर पर ओटीपी भेजें"
   },
   "errors": {
     "INVALID_CREDENTIALS": "गलत नंबर या पिन",

@@ -3,7 +3,7 @@ import AuthPage from './AuthPage';
 
 export default function LoginPage() {
     return (
-        <Suspense fallback={null}>
+        <Suspense fallback={<div>Loading...</div>}>
             <AuthPage />
         </Suspense>
     );

@@ -7,9 +7,8 @@ import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { Input } from '@/components/ui/Input';
 import { Button } from '@/components/ui/Button';
-import { LanguageToggle } from '@/components/shared/LanguageToggle';
-import { ThemeToggle } from '@/components/shared/ThemeToggle';
 import { LoginInput, LoginSchema, SignupInput, SignupSchema } from '@/schemas';
+import Link from 'next/link';
 
 
 export default function AuthPage() {
@@ -18,7 +17,6 @@ export default function AuthPage() {
     const searchParams = useSearchParams();
 
     const [activeTab, setActiveTab] = useState<'login' | 'signup'>('login');
-    const [role, setRole] = useState<'buyer' | 'seller'>('buyer');
     const [loading, setLoading] = useState(false);
     const [formError, setFormError] = useState<string | null>(null);
 
@@ -39,7 +37,6 @@ export default function AuthPage() {
     });
 
     const redirectUrl = searchParams.get('redirect') ?? '/';
-
     async function handleLogin(values: LoginInput) {
         setFormError(null);
         setLoading(true);
@@ -89,7 +86,6 @@ export default function AuthPage() {
                     phone: values.phone,
                     pin: values.pin,
                     confirmPin: values.confirmPin,
-                    role: values.role,
                 }),
             });
 
@@ -120,10 +116,6 @@ export default function AuthPage() {
 
     return (
         <div>
-            <div className="flex justify-end gap-2 mb-8 lg:hidden">
-                <LanguageToggle />
-                <ThemeToggle />
-            </div>
 
             <div className="bg-[var(--color-surface)] dark:bg-surface-dark rounded-modal shadow-modal border border-[var(--color-border)] p-8">
                 <div className="flex rounded-pill bg-background-subtle p-1 mb-8">
@@ -131,8 +123,8 @@ export default function AuthPage() {
                         type="button"
                         onClick={() => setActiveTab('login')}
                         className={`flex-1 rounded-pill px-4 py-2 text-label-sm transition ${activeTab === 'login'
-                                ? 'bg-[var(--color-surface)] shadow-sm font-semibold'
-                                : 'text-[var(--color-text-muted)]'
+                            ? 'bg-[var(--color-surface)] shadow-sm font-semibold'
+                            : 'text-[var(--color-text-muted)]'
                             }`}
                     >
                         {t('login')}
@@ -141,8 +133,8 @@ export default function AuthPage() {
                         type="button"
                         onClick={() => setActiveTab('signup')}
                         className={`flex-1 rounded-pill px-4 py-2 text-label-sm transition ${activeTab === 'signup'
-                                ? 'bg-[var(--color-surface)] shadow-sm font-semibold'
-                                : 'text-[var(--color-text-muted)]'
+                            ? 'bg-[var(--color-surface)] shadow-sm font-semibold'
+                            : 'text-[var(--color-text-muted)]'
                             }`}
                     >
                         {t('signup')}
@@ -175,9 +167,9 @@ export default function AuthPage() {
                             />
 
                             <div className="text-right">
-                                <a className="text-kridha-primary text-label-sm hover:underline" href="/reset-pin">
+                                <Link className="text-kridha-primary text-label-sm hover:underline" href="/reset-pin">
                                     {t('forgot_pin')}
-                                </a>
+                                </Link>
                             </div>
 
                             {formError && (
@@ -193,25 +185,6 @@ export default function AuthPage() {
                     <div className="space-y-6">
                         <div>
                             <h1 className="text-h3 font-bold text-[var(--color-text)]">{t('signup')}</h1>
-                            <p className="text-body-sm text-[var(--color-text-muted)] mt-2">
-                                {t('create_account')}
-                            </p>
-                        </div>
-
-                        <div className="flex gap-2 rounded-pill bg-background-subtle p-1">
-                            {(['buyer', 'seller'] as const).map((item) => (
-                                <button
-                                    key={item}
-                                    type="button"
-                                    onClick={() => setRole(item)}
-                                    className={`flex-1 rounded-pill px-3 py-2 text-label-sm transition ${role === item
-                                            ? 'bg-[var(--color-surface)] shadow-sm font-semibold'
-                                            : 'text-[var(--color-text-muted)]'
-                                        }`}
-                                >
-                                    {item === 'buyer' ? 'Buyer' : 'Supplier'}
-                                </button>
-                            ))}
                         </div>
 
                         <form onSubmit={handleSubmitSignup(handleSignup)} className="space-y-5">
@@ -246,11 +219,11 @@ export default function AuthPage() {
                             {formError && (
                                 <div className="text-error text-label-sm">{formError}</div>
                             )}
-
                             <Button type="submit" variant="primary" size="lg" className="w-full" loading={loading}>
                                 {t('signup_btn')}
                             </Button>
                         </form>
+
                     </div>
                 )}
             </div>

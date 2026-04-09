@@ -62,7 +62,10 @@
     "forgot_pin": "Forgot PIN?",
     "create_account": "Create new account",
     "toggle_signup": "New? Sign up",
-    "toggle_login": "Already have account? Login"
+    "toggle_login": "Already have account? Login",
+    "reset_pin": "Reset Pin",
+    "reset_pin_desc": "Reset your Pin",
+    "send_otp": "Send OTP to your number"
   },
   "errors": {
     "INVALID_CREDENTIALS": "Wrong number or PIN",

@@ -1,5 +1,6 @@
 import Image from 'next/image';
 import { Button } from '@/components/ui/Button';
+import { Link } from 'lucide-react';
 
 export function CtaBanner() {
     return (
@@ -21,10 +22,10 @@ export function CtaBanner() {
                         </p>
                         <div className="flex flex-col sm:flex-row gap-4">
                             <Button variant="primary" size="lg" asChild>
-                                <a href="/signup">Buyer के रूप में</a>
+                                <Link href="/signup">Buyer के रूप में</Link>
                             </Button>
                             <Button variant="outline" size="lg" asChild className="border-white text-white hover:bg-white hover:text-gray-900">
-                                <a href="/signup?role=seller">Supplier के रूप में</a>
+                                <Link href="/signup?role=seller">Supplier के रूप में</Link>
                             </Button>
                         </div>
                     </div>

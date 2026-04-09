@@ -15,7 +15,7 @@ export function IntlClientProvider({ children }: IntlClientProviderProps) {
     const messages = lang === 'hi' ? hiMessages : enMessages;
 
     return (
-        <NextIntlClientProvider locale={lang} messages={messages}>
+        <NextIntlClientProvider locale={lang} messages={messages} timeZone='Asia/Kolkata'>
             {children}
         </NextIntlClientProvider>
     );

@@ -72,20 +72,20 @@ export default function HealthPage() {
                     <div className="grid gap-6 md:grid-cols-3 w-full">
                         <div className="rounded-card bg-gray-800 border border-gray-700 p-6">
                             <div className="flex items-center gap-3">
-                                <span className={`w-3 h-3 rounded-full ${health.db === 'neon-connected' ? 'bg-emerald-500' : 'bg-rose-500'} animate-pulse-slow`} />
+                                <span className={`w-3 h-3 rounded-full ${health.db === 'ok' ? 'bg-emerald-500' : 'bg-rose-500'} animate-pulse-slow`} />
                                 <div>
                                     <div className="font-semibold">Neon PostgreSQL</div>
-                                    <p className="text-label-sm text-gray-400">{health.db === 'neon-connected' ? 'Connected' : 'Disconnected'}</p>
+                                    <p className="text-label-sm text-gray-400">{health.db === 'ok' ? 'Connected' : 'Disconnected'}</p>
                                 </div>
                             </div>
                         </div>
 
                         <div className="rounded-card bg-gray-800 border border-gray-700 p-6">
                             <div className="flex items-center gap-3">
-                                <span className={`w-3 h-3 rounded-full ${health.redis === 'upstash-connected' ? 'bg-emerald-500' : 'bg-rose-500'} animate-pulse-slow`} />
+                                <span className={`w-3 h-3 rounded-full ${health.redis === 'ok' ? 'bg-emerald-500' : 'bg-rose-500'} animate-pulse-slow`} />
                                 <div>
                                     <div className="font-semibold">Upstash Redis</div>
-                                    <p className="text-label-sm text-gray-400">{health.redis === 'upstash-connected' ? 'Connected' : 'Disconnected'}</p>
+                                    <p className="text-label-sm text-gray-400">{health.redis === 'ok' ? 'Connected' : 'Disconnected'}</p>
                                 </div>
                             </div>
                         </div>

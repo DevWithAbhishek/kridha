@@ -51,23 +51,23 @@ export default function AuthPage() {
             });
 
             if (res.status === 401) {
-                setFormError(t('errors.INVALID_CREDENTIALS'));
+                setFormError(tError('errors.INVALID_CREDENTIALS'));
                 return;
             }
 
             if (res.status === 429) {
-                setFormError(t('errors.PIN_LOCKED'));
+                setFormError(tError('errors.PIN_LOCKED'));
                 return;
             }
 
             if (!res.ok) {
-                setFormError(t('errors.INTERNAL_ERROR'));
+                setFormError(tError('errors.INTERNAL_ERROR'));
                 return;
             }
 
             router.push(redirectUrl);
         } catch {
-            setFormError(t('errors.INTERNAL_ERROR'));
+            setFormError(tError('errors.INTERNAL_ERROR'));
         } finally {
             setLoading(false);
         }
@@ -91,7 +91,7 @@ export default function AuthPage() {
             });
 
             if (!signupRes.ok && signupRes.status !== 201) {
-                setFormError(t('errors.INTERNAL_ERROR'));
+                setFormError(tError('errors.INTERNAL_ERROR'));
                 return;
             }
 
@@ -103,13 +103,13 @@ export default function AuthPage() {
             });
 
             if (!loginRes.ok) {
-                setFormError(t('errors.INVALID_CREDENTIALS'));
+                setFormError(tError('errors.INVALID_CREDENTIALS'));
                 return;
             }
 
             router.push(redirectUrl);
         } catch {
-            setFormError(t('errors.INTERNAL_ERROR'));
+            setFormError(tError('errors.INTERNAL_ERROR'));
         } finally {
             setLoading(false);
         }

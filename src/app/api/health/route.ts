@@ -1,10 +1,10 @@
 import { NextResponse } from "next/server";
-import { prisma } from "@/lib/db";
+import { prisma, withRetry } from "@/lib/db";
 import { redis } from "@/lib/redis";
 
 export async function GET() {
   try {
-    await prisma.$queryRaw`SELECT 1`;
+    await withRetry(() => prisma.$queryRaw`SELECT 1`);
     await redis.ping();
     return NextResponse.json({
       status: "ok",

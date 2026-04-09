@@ -5,6 +5,8 @@ import { NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
 
 export async function POST() {
+  // Keep Neon compute warm — belt + suspenders alongside cron-job.org
+  await prisma.$queryRaw`SELECT 1`;
   const cutoff = new Date(Date.now() - 15 * 60_000);
 
   const stale = await prisma.subOrder.findMany({

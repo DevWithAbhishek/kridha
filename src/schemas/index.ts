@@ -44,17 +44,24 @@ const PriceTierSchema = z
 
 // ── 1. Auth ───────────────────────────────────────────────────────────────
 
-export const SignupSchema = z.object({
-  phone: z
-    .string()
-    .length(10)
-    .regex(/^[0-9]{10}$/, "Phone must be exactly 10 digits"),
-  pin: z
-    .string()
-    .length(4)
-    .regex(/^[0-9]{4}$/, "PIN must be exactly 4 digits"),
-  name: z.string().min(3).max(40),
-});
+export const SignupSchema = z
+  .object({
+    phone: z
+      .string()
+      .length(10)
+      .regex(/^[0-9]{10}$/, "Phone must be exactly 10 digits"),
+    pin: z
+      .string()
+      .length(4)
+      .regex(/^[0-9]{4}$/, "PIN must be exactly 4 digits"),
+    confirmPin: z.string().length(4, "PIN must be 4 digits"),
+    name: z.string().min(3).max(40),
+    role: z.enum(["BUYER", "SELLER"]),
+  })
+  .refine((data) => data.pin === data.confirmPin, {
+    path: ["confirmPin"],
+    message: "PIN does not match",
+  });;
 
 export const LoginSchema = z.object({
   phone: z

@@ -73,10 +73,8 @@ export async function middleware(req: NextRequest) {
   if (pathname !== "/api/webhooks/razorpay") {
     const ip = req.headers.get("x-forwarded-for") ?? "127.0.0.1";
     const limiter = AUTH_PATHS.has(pathname) ? authLimiter : generalLimiter;
-    const { success, remaining } = await limiter.limit(ip);
     try {
       const { success, remaining } = await limiter.limit(ip);
-
       if (!success) {
         return NextResponse.json(
           {

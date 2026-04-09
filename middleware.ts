@@ -66,33 +66,41 @@ export async function middleware(req: NextRequest) {
     return NextResponse.next();
   }
 
+  // Fully public routes
+  if (PUBLIC_EXACT.has(pathname)) return NextResponse.next();
+
   // Rate limiting — applied to all routes except webhooks (Razorpay must never be 429'd)
   if (pathname !== "/api/webhooks/razorpay") {
     const ip = req.headers.get("x-forwarded-for") ?? "127.0.0.1";
     const limiter = AUTH_PATHS.has(pathname) ? authLimiter : generalLimiter;
     const { success, remaining } = await limiter.limit(ip);
+    try {
+      const { success, remaining } = await limiter.limit(ip);
 
-    if (!success) {
-      logger.warn(
-        { ip, path: pathname, action: "rate.limit" },
-        "Rate limit exceeded",
-      );
-      return NextResponse.json(
-        {
-          success: false,
-          code: "RATE_LIMITED",
-          message: "Too many requests. Try again later.",
-        },
-        {
-          status: 429,
-          headers: { "X-RateLimit-Remaining": String(remaining) },
-        },
-      );
+      if (!success) {
+        return NextResponse.json(
+          {
+            success: false,
+            code: "RATE_LIMITED",
+            message: "Too many requests. Try again later.",
+          },
+          {
+            status: 429,
+            headers: { "X-RateLimit-Remaining": String(remaining) },
+          },
+        );
+      }
+    } catch(err){
+      // logger.warn(
+      //   { ip, path: pathname, action: "rate.limit" },
+      //   "Rate limit exceeded",
+      // );
+      logger.error({ err, path: pathname }, "Rate limiter failed");
     }
-  }
 
-  // Fully public routes
-  if (PUBLIC_EXACT.has(pathname)) return NextResponse.next();
+    // Fail open (important for production)
+    return NextResponse.next();
+  }
 
   // Public GET — optional auth (for INV-14 seller exclusion)
   const isPublicGet =

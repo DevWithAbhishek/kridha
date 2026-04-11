@@ -28,7 +28,7 @@ export const pickupWindowService = {
           labelHi: "शाम",
           labelEn: "Evening",
           startTime: "16:00",
-          endTime: "19:00",
+          endTime: "20:00",
           daysActive: [1, 2, 3, 4, 5, 6, 7],
         },
       ],

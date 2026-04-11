@@ -61,10 +61,10 @@ export function Navbar() {
                     <LanguageToggle />
                     <ThemeToggle />
                     <Button variant="outline" size="sm">
-                        {t('login')}
+                        <Link href="/login">{t('login')}</Link>
                     </Button>
                     <Button variant="primary" size="sm">
-                        {t('get_started')}
+                        <Link href="/login">{t('get_started')}</Link>
                     </Button>
                 </div>
                 <div className="md:hidden flex items-center gap-2">

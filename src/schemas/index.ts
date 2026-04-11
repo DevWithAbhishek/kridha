@@ -66,7 +66,7 @@ export const SignupSchema = z
   .refine((data) => data.pin === data.confirmPin, {
     path: ["confirmPin"],
     message: "PIN_MISMATCH",
-  });;
+  });
 
 export const LoginSchema = z.object({
   phone: z
@@ -117,28 +117,33 @@ export const ResetPinSchema = z
   });
 
 export const RegisterAsSellerSchema = z.object({
-  storeName: z.string().min(2).max(100),
-  street: z.string().min(2),
-  line2: z.string().optional(),
-  landmark: z.string().optional(),
-  city: z.string().min(2),
-  state: z.string().min(2),
+  storeName: z.string().min(3, "STORE_NAME_SHORT").max(100),
+  street: z.string().min(5, "STREET_SHORT").max(200),
+  line2: z.string().max(100).optional(),
+  landmark: z.string().max(100).optional(),
+  city: z.string().min(2, "CITY_SHORT").max(50),
+  state: z.string().min(2, "STATE_SHORT").max(50),
   pincode: z
     .string()
-    .length(6)
-    .regex(/^[0-9]{6}$/, "Pincode must be 6 digits"),
+    .length(6, "PINCODE_INVALID")
+    .regex(/^\d{6}$/, "PINCODE_INVALID"),
   businessType: z.enum([
     "INDIVIDUAL",
     "PROPRIETORSHIP",
     "PARTNERSHIP",
     "PVT_LTD",
   ]),
-  gstNo: z.string().optional(),
-  panNo: z.string().min(10).max(10),
-  accountHolderName: z.string().min(2),
-  accountNumber: z.string().min(8).max(18),
-  ifscCode: z.string().regex(/^[A-Z]{4}0[A-Z0-9]{6}$/, "Invalid IFSC code"),
-  bankName: z.string().min(2),
+  gstNo: z.string().max(15).optional(),
+  panNo: z
+    .string()
+    .transform((val) => val.toUpperCase())
+    .refine((val) => /^[A-Z]{5}[0-9]{4}[A-Z]{1}$/.test(val), {
+      message: "PAN_INVALID",
+    }),
+  accountHolderName: z.string().min(3, "ACCOUNT_NAME_SHORT").max(100),
+  accountNumber: z.string().min(9, "ACCOUNT_INVALID").max(18),
+  ifscCode: z.string().regex(/^[A-Z]{4}0[A-Z0-9]{6}$/, "IFSC_INVALID"),
+  bankName: z.string().min(3, "BANK_SHORT").max(100),
   pickupWindows: z
     .array(
       z.object({

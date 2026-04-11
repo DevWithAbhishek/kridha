@@ -37,11 +37,11 @@ export function HeroSection() {
                         {/* CTAs */}
                         <div className="flex flex-col sm:flex-row gap-4 mb-8">
                             <Button variant="primary" size="lg" asChild>
-                                <Link href="/signup">{t('cta_buyer')}</Link>
+                                <Link href="/login">{t('cta_buyer')}</Link>
                             </Button>
 
                             <Button variant="outline" size="lg" asChild>
-                                <Link href="/signup?role=seller">{t('cta_seller')}</Link>
+                                <Link href="/seller-registration">{t('cta_seller')}</Link>
                             </Button>
                         </div>
 

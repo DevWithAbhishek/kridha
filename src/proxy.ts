@@ -39,6 +39,7 @@ const PUBLIC_EXACT = new Set([
   "/api/auth/reset-pin",
   "/api/health",
   "/api/webhooks/razorpay",
+  "/api/pincode",
 ]);
 
 const PUBLIC_GET_PATTERNS = [
@@ -54,7 +55,7 @@ const AUTH_PATHS = new Set([
   "/api/auth/reset-pin",
 ]);
 
-export async function middleware(req: NextRequest) {
+export async function proxy(req: NextRequest) {
   const { pathname } = req.nextUrl;
 
   // Cron endpoints — Bearer CRON_SECRET only
@@ -88,24 +89,20 @@ export async function middleware(req: NextRequest) {
           },
         );
       }
-    } catch(err){
-      // logger.warn(
-      //   { ip, path: pathname, action: "rate.limit" },
-      //   "Rate limit exceeded",
-      // );
+    } catch (err) {
       logger.error({ err, path: pathname }, "Rate limiter failed");
     }
-
-    // Fail open (important for production)
-    return NextResponse.next();
   }
 
   // Public GET — optional auth (for INV-14 seller exclusion)
   const isPublicGet =
     req.method === "GET" && PUBLIC_GET_PATTERNS.some((r) => r.test(pathname));
+
+  // Extract token
   const token = req.cookies.get("kridha_access")?.value;
 
   if (isPublicGet) {
+    if (!token) return NextResponse.next();
     if (token) {
       try {
         const payload = jwt.verify(
@@ -117,10 +114,9 @@ export async function middleware(req: NextRequest) {
         headers.set("x-user-roles", JSON.stringify(payload.roles));
         return NextResponse.next({ request: { headers } });
       } catch {
-        /* treat as anonymous */
+        return NextResponse.next();
       }
     }
-    return NextResponse.next();
   }
 
   // Protected — require valid access token
@@ -142,6 +138,11 @@ export async function middleware(req: NextRequest) {
     headers.set("x-user-roles", JSON.stringify(payload.roles));
     return NextResponse.next({ request: { headers } });
   } catch {
+    // try refresh
+    const refresh = req.cookies.get("kridha_refresh")?.value;
+    if (refresh) {
+      return NextResponse.redirect(new URL("/api/auth/refresh", req.url));
+    }
     return NextResponse.json(
       {
         success: false,

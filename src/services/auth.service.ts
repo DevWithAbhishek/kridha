@@ -1,6 +1,5 @@
 import argon2 from "argon2";
 import crypto from "crypto";
-import { prisma } from "@/lib/db";
 import { ERR } from "@/lib/errors";
 import { tokenService } from "./token.service";
 import { pickupWindowService } from "./pickup-window.service";
@@ -83,59 +82,23 @@ export const authService = {
     const record = await authRepo.findOtpRequest(input.phone, otpHash);
     if (!record) throw ERR.INVALID_OTP;
     const newPin = await hashByArgon(input.newPin);
-
-    await prisma.$transaction([
-      prisma.otpRequest.update({
-        where: { id: record.id },
-        data: { usedAt: new Date() },
-      }),
-      prisma.user.update({
-        where: { phone: input.phone },
-        data: { pin: newPin },
-      }),
-      // Revoke all sessions — force re-login after PIN change
-      prisma.refreshToken.updateMany({
-        where: { user: { phone: input.phone } },
-        data: { revoked: true },
-      }),
-    ]);
+    await authRepo.resetPin(record.id, input.phone, newPin);
   },
 
   async registerAsSeller(userId: string, input: RegisterAsSellerInput) {
     const conflict = await authRepo.findSeller(input.storeName, input.street);
     if (conflict) throw ERR.STORE_EXISTS;
 
-    await prisma.$transaction(async (tx) => {
-      await tx.sellerProfile.create({
-        data: {
-          userId,
-          storeName: input.storeName,
-          street: input.street,
-          line2: input.line2 ?? null,
-          landmark: input.landmark ?? null,
-          city: input.city,
-          state: input.state,
-          pinCode: input.pincode,
-          businessType: input.businessType as never,
-          gstNumber: input.gstNo ?? null,
-          panNumber: input.panNo,
-          accountHolderName: input.accountHolderName,
-          accountNumber: input.accountNumber,
-          ifscCode: input.ifscCode,
-          bankName: input.bankName,
-        },
-      });
-      await tx.user.update({
-        where: { id: userId },
-        data: { roles: { push: "SELLER" } },
-      });
-    });
+    await authRepo.createSeller(input, userId);
     // Create default pickup windows after transaction
     await pickupWindowService.createDefaults(userId);
-    return { status: "PENDING", bankVerified: false };
+    return {
+      success: true,
+      data: { status: "PENDING", bankVerified: false },
+    }
   },
 
   async getUpdatedUser(userId: string) {
     return authRepo.findUpdatedUser(userId);
-  }
+  },
 };

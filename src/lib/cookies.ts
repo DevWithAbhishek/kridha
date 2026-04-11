@@ -20,14 +20,14 @@ export function setAuthCookies(
   res.cookies.set("kridha_access", tokens.accessToken, {
     httpOnly: true,
     secure: IS_PROD,
-    sameSite: "strict",
+    sameSite: "lax",
     path: "/",
     maxAge: 60 * 15,
   });
   res.cookies.set("kridha_refresh", tokens.refreshToken, {
     httpOnly: true,
     secure: IS_PROD,
-    sameSite: "strict",
+    sameSite: "lax",
     path: "/api/auth",
     maxAge: 60 * 60 * 24 * 7,
   });
@@ -35,7 +35,7 @@ export function setAuthCookies(
   res.cookies.set("kridha_lang", preferredLang === "en" ? "en" : "hi", {
     httpOnly: false,
     secure: IS_PROD,
-    sameSite: "strict",
+    sameSite: "lax",
     path: "/",
     maxAge: 60 * 60 * 24 * 365,
   });

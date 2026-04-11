@@ -54,7 +54,7 @@ export default function HealthPage() {
             <div className="max-w-page mx-auto px-page-x md:px-page-x-md py-16">
                 <div className="flex flex-col items-center gap-6">
                     <Image
-                        src="/images/kridha_logo_footer.png"
+                        src="/images/kridha_logo_nav.png"
                         alt="Kridha"
                         width={180}
                         height={48}

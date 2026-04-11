@@ -9,20 +9,21 @@ import Link from 'next/link';
 export default function NotFoundPage() {
     const router = useRouter();
     const [countdown, setCountdown] = useState(5);
-
     useEffect(() => {
         const timer = setInterval(() => {
-            setCountdown((prev) => {
-                if (prev === 1) {
-                    router.push('/');
-                    return 0;
-                }
-                return prev - 1;
-            });
+            setCountdown((prev) => prev - 1);
         }, 1000);
 
         return () => clearInterval(timer);
-    }, [router]);
+    }, []);
+
+
+    // ✅ Separate effect for navigation
+    useEffect(() => {
+        if (countdown === 0) {
+            router.push('/');
+        }
+    }, [countdown, router]);
 
     return (
         <div className="min-h-screen bg-[var(--color-bg)] flex items-center justify-center px-page-x py-8 relative">

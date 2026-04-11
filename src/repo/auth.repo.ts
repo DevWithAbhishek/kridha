@@ -1,4 +1,5 @@
 import { prisma } from "@/lib/db";
+import { RegisterAsSellerInput } from "@/schemas";
 
 export const authRepo = {
   async updateUserLoginAttempts(
@@ -75,6 +76,52 @@ export const authRepo = {
     await prisma.otpRequest.update({
       where: { id },
       data: { usedAt: new Date() },
+    });
+  },
+
+  async resetPin(id: string, phone: string, newPin: string) {
+    await prisma.$transaction([
+      prisma.otpRequest.update({
+        where: { id },
+        data: { usedAt: new Date() },
+      }),
+      prisma.user.update({
+        where: { phone },
+        data: { pin: newPin },
+      }),
+      // Revoke all sessions — force re-login after PIN change
+      prisma.refreshToken.updateMany({
+        where: { user: { phone } },
+        data: { revoked: true },
+      }),
+    ]);
+  },
+
+  async createSeller(input: RegisterAsSellerInput, userId: string) {
+    await prisma.$transaction(async (tx) => {
+      await tx.sellerProfile.create({
+        data: {
+          userId,
+          storeName: input.storeName,
+          street: input.street,
+          line2: input.line2 ?? null,
+          landmark: input.landmark ?? null,
+          city: input.city,
+          state: input.state,
+          pinCode: input.pincode,
+          businessType: input.businessType as never,
+          gstNumber: input.gstNo ?? null,
+          panNumber: input.panNo,
+          accountHolderName: input.accountHolderName,
+          accountNumber: input.accountNumber,
+          ifscCode: input.ifscCode,
+          bankName: input.bankName,
+        },
+      });
+      await tx.user.update({
+        where: { id: userId },
+        data: { roles: { push: "SELLER" } },
+      });
     });
   },
 };

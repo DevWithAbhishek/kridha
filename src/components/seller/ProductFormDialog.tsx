@@ -3,13 +3,24 @@
 import * as Dialog from "@radix-ui/react-dialog";
 import { useState } from "react";
 
+type Product = {
+    id: string;
+};
+
+type Props = {
+    open: boolean;
+    onClose: () => void;
+    product?: Product;
+    onSave: () => void;
+};
+
 export default function ProductFormDialog({
     open,
     onClose,
     product,
     onSave,
-}: any) {
-    const [step, setStep] = useState(1);
+}: Props) {
+    const [step, setStep] = useState<number>(1);
 
     async function submit() {
         const method = product ? "PATCH" : "POST";
@@ -43,6 +54,7 @@ export default function ProductFormDialog({
 
                 <div className="flex justify-between mt-6">
                     <button onClick={() => setStep(step - 1)}>Back</button>
+
                     {step < 3 ? (
                         <button onClick={() => setStep(step + 1)}>Next</button>
                     ) : (

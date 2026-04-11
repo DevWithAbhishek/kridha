@@ -20,12 +20,23 @@ const schema = z
     });
 
 type FormData = z.infer<typeof schema>;
+type Day = FormData["daysActive"][number];
+
+type PickupWindow = FormData & {
+    id: string;
+};
+
+type Props = {
+    window?: PickupWindow;
+    onSave: () => void;
+    onCancel: () => void;
+};
 
 export default function PickupWindowForm({
     window,
     onSave,
     onCancel,
-}: any) {
+}: Props) {
     const {
         register,
         handleSubmit,
@@ -38,7 +49,7 @@ export default function PickupWindowForm({
 
     const days = watch("daysActive") || [];
 
-    function toggleDay(day: FormData["daysActive"][number]) {
+    function toggleDay(day: Day) {
         const next = days.includes(day)
             ? days.filter((d) => d !== day)
             : [...days, day];
@@ -60,18 +71,28 @@ export default function PickupWindowForm({
         onSave();
     }
 
+    const DAY_OPTIONS: Day[] = [
+        "MON",
+        "TUE",
+        "WED",
+        "THU",
+        "FRI",
+        "SAT",
+        "SUN",
+    ];
+
     return (
         <form onSubmit={handleSubmit(onSubmit)} className="space-y-4">
             <input {...register("labelEn")} placeholder="English label" />
             <input {...register("labelHi")} placeholder="Hindi label" />
 
             <div className="flex gap-2">
-                {["MON", "TUE", "WED", "THU", "FRI", "SAT", "SUN"].map((d) => (
+                {DAY_OPTIONS.map((d) => (
                     <button
                         type="button"
                         key={d}
-                        onClick={() => toggleDay(d as any)}
-                        className={`px-3 py-1 rounded-pill ${days.includes(d as any)
+                        onClick={() => toggleDay(d)}
+                        className={`px-3 py-1 rounded-pill ${days.includes(d)
                                 ? "bg-kridha-primary text-white"
                                 : "bg-gray-200"
                             }`}

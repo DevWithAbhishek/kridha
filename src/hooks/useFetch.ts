@@ -9,50 +9,50 @@ interface FetchState<T> {
 }
 
 function useFetch<T>(
-    url: string,
-    fallback: T,
-    options?: { skip?: boolean }
+  url: string,
+  fallback: T,
+  options?: { skip?: boolean },
 ): FetchState<T> {
-    const [data, setData] = useState<T>(fallback);
-    const [loading, setLoading] = useState(false);
-    const [error, setError] = useState<string | null>(null);
-    const [tick, setTick] = useState(0);
-    const [isStale, setIsStale] = useState(false);
+  const [data, setData] = useState<T>(fallback);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [tick, setTick] = useState(0);
+  const [isStale, setIsStale] = useState(false);
 
-    const fetchData = useCallback(async () => {
-        if (options?.skip) return;
+  const fetchData = useCallback(async () => {
+    if (options?.skip) return;
 
-        setLoading(true);
-        setError(null);
+    setLoading(true);
+    setError(null);
 
-        try {
-            const response = await fetch(url, {
-                credentials: 'include',
-            });
+    try {
+      const response = await fetch(url, {
+        credentials: "include",
+      });
 
-            if (!response.ok) {
-                throw new Error(`HTTP error! status: ${response.status}`);
-            }
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`);
+      }
 
-            const json = await response.json();
-            setData(json.data ?? json);
-            setIsStale(false);
-        } catch (err) {
-            setData(fallback);
-            setError(err instanceof Error ? err.message : 'An error occurred');
-            setIsStale(true);
-        } finally {
-            setLoading(false);
-        }
-    }, [url, fallback, options?.skip]);
+      const json = await response.json();
 
-    useEffect(() => {
-        fetchData();
-    }, [fetchData, tick]);
+      setData(json.data); // strict
+      setIsStale(false);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "An error occurred");
+      setIsStale(true);
+    } finally {
+      setLoading(false);
+    }
+  }, [url, options?.skip]);
 
-    const refetch = () => setTick((prev) => prev + 1);
+  useEffect(() => {
+    fetchData();
+  }, [fetchData, tick]);
 
-    return { data, loading, error, refetch, isStale };
+  const refetch = () => setTick((prev) => prev + 1);
+
+  return { data, loading, error, refetch, isStale };
 }
 
 export { useFetch };

@@ -7,11 +7,11 @@ import type {
   CartSession,
   SavedProduct,
   Review,
-  PriceTier,
-  Deal,
-  OrderItem,
-  StatusEvent,
 } from "@/types/dashboard";
+
+// ─────────────────────────────────────────────────────────────
+// USER
+// ─────────────────────────────────────────────────────────────
 
 export const DUMMY_USER: User = {
   id: "user-1",
@@ -22,26 +22,60 @@ export const DUMMY_USER: User = {
   reliabilityScore: 95,
   noShowCount: 0,
   creditBalance: 0,
+  isFlagged: false,
   profileImageUrl: null,
+  street: null,
+  line2: null,
+  landmark: null,
   city: "Lucknow",
+  state: "Uttar Pradesh",
   createdAt: "2023-01-01T00:00:00Z",
 };
 
+// ─────────────────────────────────────────────────────────────
+// SELLER PROFILE
+// ─────────────────────────────────────────────────────────────
+
 export const DUMMY_SELLER_PROFILE: SellerProfile = {
+  id: "seller-1",
   userId: "user-2",
+
   storeName: "Gupta Oil Mill",
+  street: "MG Road",
+  line2: null,
+  landmark: null,
   city: "Lucknow",
   state: "Uttar Pradesh",
-  street: "MG Road",
   pinCode: "226001",
-  profileStatus: "VERIFIED",
+
+  storeImages: [],
+
+  latitude: null,
+  longitude: null,
+
+  businessType: "INDIVIDUAL",
+  gstNumber: null,
+  panNumber: null,
+
   kycStatus: "VERIFIED",
+  profileStatus: "VERIFIED",
+
+  accountHolderName: "Gupta Traders",
+  accountNumber: "****6677",
+  ifscCode: null,
+  bankName: "State Bank of India",
+  bankVerified: true,
+
   sellerRating: 4.7,
   sellerRatingCount: 38,
   reliabilityScore: 92,
-  accountNumber: "****6677",
-  bankName: "State Bank of India",
+
+  createdAt: "2023-01-01T00:00:00Z",
 };
+
+// ─────────────────────────────────────────────────────────────
+// PRODUCTS
+// ─────────────────────────────────────────────────────────────
 
 export const DUMMY_PRODUCTS: Product[] = [
   {
@@ -57,7 +91,7 @@ export const DUMMY_PRODUCTS: Product[] = [
     maxOrderQuantity: 100,
     available: 200,
     imageUrls: ["/images/mustard-oil.jpg"],
-    blurHash: "L6PZfSi_.AyE_3t7t7R**0o#DgR4",
+    blurHash: null,
     latitude: 26.8467,
     longitude: 80.9462,
     city: "Lucknow",
@@ -70,25 +104,8 @@ export const DUMMY_PRODUCTS: Product[] = [
         maxQty: 10,
         pricePerUnit: 180,
       },
-      {
-        id: "tier-2",
-        productId: "prod-1",
-        minQty: 11,
-        maxQty: 50,
-        pricePerUnit: 165,
-      },
-      {
-        id: "tier-3",
-        productId: "prod-1",
-        minQty: 51,
-        maxQty: null,
-        pricePerUnit: 150,
-      },
     ],
     deals: [],
-    _count: { orderItems: 45 },
-    distance_km: 2.5,
-    min_price: 150,
     seller: {
       storeName: "Gupta Oil Mill",
       city: "Lucknow",
@@ -97,107 +114,11 @@ export const DUMMY_PRODUCTS: Product[] = [
     },
     createdAt: "2023-01-01T00:00:00Z",
   },
-  {
-    id: "prod-2",
-    sellerId: "seller-2",
-    nameEn: "Basmati Rice",
-    nameHi: "बासमती चावल",
-    description: "Premium basmati rice",
-    category: "GRAINS",
-    unit: "KG",
-    unitIncrement: 1,
-    minOrderQuantity: 1,
-    maxOrderQuantity: 50,
-    available: 120,
-    imageUrls: ["/images/basmati-rice.jpg"],
-    blurHash: "L8RZfSi_.AyE_3t7t7R**0o#DgR4",
-    latitude: 26.8467,
-    longitude: 80.9462,
-    city: "Lucknow",
-    productStatus: "ACTIVE",
-    priceTiers: [
-      {
-        id: "tier-4",
-        productId: "prod-2",
-        minQty: 1,
-        maxQty: 10,
-        pricePerUnit: 200,
-      },
-      {
-        id: "tier-5",
-        productId: "prod-2",
-        minQty: 11,
-        maxQty: null,
-        pricePerUnit: 180,
-      },
-    ],
-    deals: [],
-    _count: { orderItems: 30 },
-    distance_km: 1.8,
-    min_price: 180,
-    seller: {
-      storeName: "Sharma Rice Mill",
-      city: "Lucknow",
-      reliabilityScore: 88,
-      sellerRating: 4.5,
-    },
-    createdAt: "2023-01-01T00:00:00Z",
-  },
-  {
-    id: "prod-3",
-    sellerId: "seller-3",
-    nameEn: "Groundnut Oil",
-    nameHi: "मूंगफली तेल",
-    description: "Healthy groundnut oil",
-    category: "OIL",
-    unit: "LITRE",
-    unitIncrement: 1,
-    minOrderQuantity: 1,
-    maxOrderQuantity: 30,
-    available: 80,
-    imageUrls: ["/images/groundnut-oil.jpg"],
-    blurHash: "L9SZfSi_.AyE_3t7t7R**0o#DgR4",
-    latitude: 26.8467,
-    longitude: 80.9462,
-    city: "Lucknow",
-    productStatus: "ACTIVE",
-    priceTiers: [
-      {
-        id: "tier-6",
-        productId: "prod-3",
-        minQty: 1,
-        maxQty: 5,
-        pricePerUnit: 220,
-      },
-      {
-        id: "tier-7",
-        productId: "prod-3",
-        minQty: 6,
-        maxQty: null,
-        pricePerUnit: 200,
-      },
-    ],
-    deals: [
-      {
-        id: "deal-1",
-        productId: "prod-3",
-        discountPercent: 10,
-        expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
-        status: "ACTIVE",
-      },
-    ],
-    _count: { orderItems: 20 },
-    distance_km: 3.2,
-    min_price: 180,
-    seller: {
-      storeName: "Verma Oil Depot",
-      city: "Lucknow",
-      reliabilityScore: 90,
-      sellerRating: 4.6,
-    },
-    createdAt: "2023-01-01T00:00:00Z",
-  },
 ];
+
+// ─────────────────────────────────────────────────────────────
+// SUBORDERS
+// ─────────────────────────────────────────────────────────────
 
 export const DUMMY_SUBORDERS: SubOrder[] = [
   {
@@ -205,25 +126,34 @@ export const DUMMY_SUBORDERS: SubOrder[] = [
     shortId: "KR-4F2A1B",
     orderId: "order-1",
     sellerId: "seller-1",
-    buyerId: "buyer-1",
+    buyerId: "user-1",
+
     status: "CONFIRMED",
+
     totalAmount: 4500,
     advanceAmount: 225,
     remainingAmount: 4275,
-    pickupDate: new Date(Date.now() + 2 * 24 * 60 * 60 * 1000).toISOString(),
-    pickupDeadline: new Date(
-      Date.now() + 2 * 24 * 60 * 60 * 1000 + 2 * 60 * 60 * 1000,
-    ).toISOString(),
+
+    pickupDate: new Date().toISOString(),
+    pickupDeadline: new Date().toISOString(),
+
     deliveryOtp: null,
     otpAttempts: 0,
+
     paymentLinkUrl: null,
     paymentLinkExpiresAt: null,
+
     seller: {
       storeName: "Gupta Oil Mill",
       city: "Lucknow",
       reliabilityScore: 92,
     },
-    buyer: { name: "Arjun Sharma", phone: "9876540099" },
+
+    buyer: {
+      name: "Arjun Sharma",
+      phone: "9876540099",
+    },
+
     orderItems: [
       {
         id: "item-1",
@@ -238,238 +168,14 @@ export const DUMMY_SUBORDERS: SubOrder[] = [
         },
       },
     ],
-    statusHistory: [
-      {
-        id: "event-1",
-        subOrderId: "sub-1",
-        fromStatus: "PENDING",
-        toStatus: "CONFIRMED",
-        note: null,
-        createdAt: "2023-01-01T00:00:00Z",
-      },
-    ],
-    createdAt: "2023-01-01T00:00:00Z",
-  },
-  {
-    id: "sub-2",
-    shortId: "KR-8C3D9E",
-    orderId: "order-2",
-    sellerId: "seller-2",
-    buyerId: "buyer-1",
-    status: "READY_FOR_OTP_VERIFICATION",
-    totalAmount: 2400,
-    advanceAmount: 120,
-    remainingAmount: 2280,
-    pickupDate: new Date(Date.now() + 1 * 24 * 60 * 60 * 1000).toISOString(),
-    pickupDeadline: new Date(
-      Date.now() + 1 * 24 * 60 * 60 * 1000 + 2 * 60 * 60 * 1000,
-    ).toISOString(),
-    deliveryOtp: "4821",
-    otpAttempts: 0,
-    paymentLinkUrl: null,
-    paymentLinkExpiresAt: null,
-    seller: {
-      storeName: "Sharma Rice Mill",
-      city: "Lucknow",
-      reliabilityScore: 88,
-    },
-    buyer: { name: "Arjun Sharma", phone: "9876540099" },
-    orderItems: [
-      {
-        id: "item-2",
-        productId: "prod-2",
-        quantity: 12,
-        unitPrice: 200,
-        subTotal: 2400,
-        product: { nameEn: "Basmati Rice", nameHi: "बासमती चावल", unit: "KG" },
-      },
-    ],
-    statusHistory: [
-      {
-        id: "event-2",
-        subOrderId: "sub-2",
-        fromStatus: "PENDING",
-        toStatus: "CONFIRMED",
-        note: null,
-        createdAt: "2023-01-01T00:00:00Z",
-      },
-      {
-        id: "event-3",
-        subOrderId: "sub-2",
-        fromStatus: "CONFIRMED",
-        toStatus: "READY_FOR_OTP_VERIFICATION",
-        note: null,
-        createdAt: "2023-01-01T00:00:00Z",
-      },
-    ],
-    createdAt: "2023-01-01T00:00:00Z",
-  },
-  {
-    id: "sub-3",
-    shortId: "KR-2B5F7C",
-    orderId: "order-3",
-    sellerId: "seller-3",
-    buyerId: "buyer-1",
-    status: "COMPLETED",
-    totalAmount: 3200,
-    advanceAmount: 160,
-    remainingAmount: 3040,
-    pickupDate: new Date(Date.now() - 1 * 24 * 60 * 60 * 1000).toISOString(),
-    pickupDeadline: new Date(
-      Date.now() - 1 * 24 * 60 * 60 * 1000 + 2 * 60 * 60 * 1000,
-    ).toISOString(),
-    deliveryOtp: null,
-    otpAttempts: 0,
-    paymentLinkUrl: null,
-    paymentLinkExpiresAt: null,
-    seller: {
-      storeName: "Verma Oil Depot",
-      city: "Lucknow",
-      reliabilityScore: 90,
-    },
-    buyer: { name: "Arjun Sharma", phone: "9876540099" },
-    orderItems: [
-      {
-        id: "item-3",
-        productId: "prod-3",
-        quantity: 20,
-        unitPrice: 160,
-        subTotal: 3200,
-        product: { nameEn: "Wheat Flour", nameHi: "गेहूं का आटा", unit: "KG" },
-      },
-    ],
-    statusHistory: [
-      {
-        id: "event-4",
-        subOrderId: "sub-3",
-        fromStatus: "PENDING",
-        toStatus: "CONFIRMED",
-        note: null,
-        createdAt: "2023-01-01T00:00:00Z",
-      },
-      {
-        id: "event-5",
-        subOrderId: "sub-3",
-        fromStatus: "CONFIRMED",
-        toStatus: "READY_FOR_OTP_VERIFICATION",
-        note: null,
-        createdAt: "2023-01-01T00:00:00Z",
-      },
-      {
-        id: "event-6",
-        subOrderId: "sub-3",
-        fromStatus: "COMPLETED",
-        toStatus: "COMPLETED",
-        note: null,
-        createdAt: "2023-01-01T00:00:00Z",
-      },
-    ],
+
     createdAt: "2023-01-01T00:00:00Z",
   },
 ];
 
-export const DUMMY_SELLER_ORDERS: SubOrder[] = [
-  {
-    id: "sub-4",
-    shortId: "KR-9A1C3D",
-    orderId: "order-4",
-    sellerId: "seller-1",
-    buyerId: "buyer-2",
-    status: "CONFIRMED",
-    totalAmount: 3600,
-    advanceAmount: 180,
-    remainingAmount: 3420,
-    pickupDate: new Date(Date.now() + 1 * 24 * 60 * 60 * 1000).toISOString(),
-    pickupDeadline: new Date(
-      Date.now() + 1 * 24 * 60 * 60 * 1000 + 2 * 60 * 60 * 1000,
-    ).toISOString(),
-    deliveryOtp: null,
-    otpAttempts: 0,
-    paymentLinkUrl: null,
-    paymentLinkExpiresAt: null,
-    buyer: { name: "Ravi Kumar", phone: "9876540088" },
-    orderItems: [
-      {
-        id: "item-4",
-        productId: "prod-1",
-        quantity: 20,
-        unitPrice: 180,
-        subTotal: 3600,
-        product: {
-          nameEn: "Mustard Oil",
-          nameHi: "सरसों का तेल",
-          unit: "LITRE",
-        },
-      },
-    ],
-    statusHistory: [
-      {
-        id: "event-7",
-        subOrderId: "sub-4",
-        fromStatus: "PENDING",
-        toStatus: "CONFIRMED",
-        note: null,
-        createdAt: "2023-01-01T00:00:00Z",
-      },
-    ],
-    createdAt: "2023-01-01T00:00:00Z",
-  },
-  {
-    id: "sub-5",
-    shortId: "KR-7E2F4B",
-    orderId: "order-5",
-    sellerId: "seller-1",
-    buyerId: "buyer-3",
-    status: "AWAITING_PAYMENT",
-    totalAmount: 5400,
-    advanceAmount: 270,
-    remainingAmount: 5130,
-    pickupDate: new Date(Date.now() + 2 * 24 * 60 * 60 * 1000).toISOString(),
-    pickupDeadline: new Date(
-      Date.now() + 2 * 24 * 60 * 60 * 1000 + 2 * 60 * 60 * 1000,
-    ).toISOString(),
-    deliveryOtp: null,
-    otpAttempts: 0,
-    paymentLinkUrl: "https://rzp.io/payment-link",
-    paymentLinkExpiresAt: new Date(
-      Date.now() + 1 * 60 * 60 * 1000,
-    ).toISOString(),
-    buyer: { name: "Priya Singh", phone: "9876540077" },
-    orderItems: [
-      {
-        id: "item-5",
-        productId: "prod-1",
-        quantity: 30,
-        unitPrice: 180,
-        subTotal: 5400,
-        product: {
-          nameEn: "Mustard Oil",
-          nameHi: "सरसों का तेल",
-          unit: "LITRE",
-        },
-      },
-    ],
-    statusHistory: [
-      {
-        id: "event-8",
-        subOrderId: "sub-5",
-        fromStatus: "PENDING",
-        toStatus: "CONFIRMED",
-        note: null,
-        createdAt: "2023-01-01T00:00:00Z",
-      },
-      {
-        id: "event-9",
-        subOrderId: "sub-5",
-        fromStatus: "CONFIRMED",
-        toStatus: "AWAITING_PAYMENT",
-        note: null,
-        createdAt: "2023-01-01T00:00:00Z",
-      },
-    ],
-    createdAt: "2023-01-01T00:00:00Z",
-  },
-];
+// ─────────────────────────────────────────────────────────────
+// NOTIFICATIONS
+// ─────────────────────────────────────────────────────────────
 
 export const DUMMY_NOTIFICATIONS: Notification[] = [
   {
@@ -482,104 +188,170 @@ export const DUMMY_NOTIFICATIONS: Notification[] = [
     subOrderId: "sub-1",
     createdAt: "2023-01-01T00:00:00Z",
   },
-  {
-    id: "notif-2",
-    userId: "user-1",
-    title: "New Order",
-    body: "You have a new order from Ravi Kumar.",
-    type: "NEW_ORDER",
-    read: false,
-    subOrderId: "sub-4",
-    createdAt: "2023-01-01T00:00:00Z",
-  },
-  {
-    id: "notif-3",
-    userId: "user-1",
-    title: "Payout Received",
-    body: "Your payout for order KR-2B5F7C has been processed.",
-    type: "PAYOUT",
-    read: true,
-    subOrderId: "sub-3",
-    createdAt: "2023-01-01T00:00:00Z",
-  },
 ];
+
+// ─────────────────────────────────────────────────────────────
+// CART
+// ─────────────────────────────────────────────────────────────
 
 export const DUMMY_CART: CartSession = {
   id: "cart-1",
-  buyerId: "buyer-1",
+  userId: "user-1",
+  totalAdvance: 45,
   items: [
     {
       id: "cart-item-1",
       productId: "prod-1",
       quantity: 5,
+      unitPrice: 180,
+      subTotal: 900,
       pickupWindowId: "window-1",
-      pickupDate: new Date(Date.now() + 1 * 24 * 60 * 60 * 1000).toISOString(),
+      pickupDate: new Date().toISOString(),
       product: {
         nameEn: "Mustard Oil",
         nameHi: "सरसों का तेल",
         unit: "LITRE",
         imageUrls: ["/images/mustard-oil.jpg"],
-        priceTiers: [
-          {
-            id: "tier-1",
-            productId: "prod-1",
-            minQty: 1,
-            maxQty: 10,
-            pricePerUnit: 180,
-          },
-        ],
-        seller: { storeName: "Gupta Oil Mill", city: "Lucknow" },
+        seller: {
+          storeName: "Gupta Oil Mill",
+          city: "Lucknow",
+        },
       },
     },
   ],
-  summary: {
-    totalItems: 5,
-    totalAmount: 900,
-    sellerCount: 1,
-    advanceBreakdown: [
-      { sellerId: "seller-1", storeName: "Gupta Oil Mill", advance: 45 },
-    ],
-  },
+  createdAt: "2023-01-01T00:00:00Z",
 };
+
+// ─────────────────────────────────────────────────────────────
+// SAVED PRODUCTS
+// ─────────────────────────────────────────────────────────────
 
 export const DUMMY_SAVED: SavedProduct[] = [
   {
     id: "saved-1",
-    productId: "prod-2",
+    productId: "prod-1",
     type: "FAVOURITE",
-    product: DUMMY_PRODUCTS[1],
-    createdAt: "2023-01-01T00:00:00Z",
-  },
-  {
-    id: "saved-2",
-    productId: "prod-3",
-    type: "SAVED_FOR_LATER",
-    product: DUMMY_PRODUCTS[2],
+    product: DUMMY_PRODUCTS[0],
     createdAt: "2023-01-01T00:00:00Z",
   },
 ];
 
+// ─────────────────────────────────────────────────────────────
+// REVIEWS
+// ─────────────────────────────────────────────────────────────
+
 export const DUMMY_REVIEWS: Review[] = [
   {
     id: "review-1",
-    subOrderId: "sub-3",
-    productId: "prod-3",
-    buyerId: "buyer-1",
+    subOrderId: "sub-1",
+    productId: "prod-1",
     rating: 5,
     comment: "Excellent quality!",
-    product: { nameEn: "Groundnut Oil", nameHi: "मूंगफली तेल" },
-    buyer: { name: "Arjun Sharma" },
+    product: {
+      nameEn: "Mustard Oil",
+      nameHi: "सरसों का तेल",
+    },
+    buyer: {
+      name: "Arjun Sharma",
+    },
     createdAt: "2023-01-01T00:00:00Z",
   },
+];
+
+export const DUMMY_SELLER_ORDERS: SubOrder[] = [
   {
-    id: "review-2",
-    subOrderId: "sub-2",
-    productId: "prod-2",
-    buyerId: "buyer-1",
-    rating: 4,
-    comment: "Good rice, timely delivery.",
-    product: { nameEn: "Basmati Rice", nameHi: "बासमती चावल" },
-    buyer: { name: "Arjun Sharma" },
+    id: "sub-2",
+    shortId: "KR-9A1C3D",
+    orderId: "order-2",
+    sellerId: "seller-1",
+    buyerId: "user-2",
+
+    status: "CONFIRMED",
+
+    totalAmount: 3600,
+    advanceAmount: 180,
+    remainingAmount: 3420,
+
+    pickupDate: new Date(Date.now() + 1 * 24 * 60 * 60 * 1000).toISOString(),
+
+    pickupDeadline: new Date(
+      Date.now() + 1 * 24 * 60 * 60 * 1000 + 2 * 60 * 60 * 1000,
+    ).toISOString(),
+
+    deliveryOtp: null,
+    otpAttempts: 0,
+
+    paymentLinkUrl: null,
+    paymentLinkExpiresAt: null,
+
+    buyer: {
+      name: "Ravi Kumar",
+      phone: "9876540088",
+    },
+
+    orderItems: [
+      {
+        id: "item-2",
+        productId: "prod-1",
+        quantity: 20,
+        unitPrice: 180,
+        subTotal: 3600,
+        product: {
+          nameEn: "Mustard Oil",
+          nameHi: "सरसों का तेल",
+          unit: "LITRE",
+        },
+      },
+    ],
+
+    createdAt: "2023-01-01T00:00:00Z",
+  },
+
+  {
+    id: "sub-3",
+    shortId: "KR-7E2F4B",
+    orderId: "order-3",
+    sellerId: "seller-1",
+    buyerId: "user-3",
+
+    status: "AWAITING_PAYMENT",
+
+    totalAmount: 5400,
+    advanceAmount: 270,
+    remainingAmount: 5130,
+
+    pickupDate: new Date(Date.now() + 2 * 24 * 60 * 60 * 1000).toISOString(),
+
+    pickupDeadline: new Date(
+      Date.now() + 2 * 24 * 60 * 60 * 1000 + 2 * 60 * 60 * 1000,
+    ).toISOString(),
+
+    deliveryOtp: null,
+    otpAttempts: 0,
+
+    paymentLinkUrl: "https://rzp.io/payment-link",
+    paymentLinkExpiresAt: new Date(Date.now() + 60 * 60 * 1000).toISOString(),
+
+    buyer: {
+      name: "Priya Singh",
+      phone: "9876540077",
+    },
+
+    orderItems: [
+      {
+        id: "item-3",
+        productId: "prod-1",
+        quantity: 30,
+        unitPrice: 180,
+        subTotal: 5400,
+        product: {
+          nameEn: "Mustard Oil",
+          nameHi: "सरसों का तेल",
+          unit: "LITRE",
+        },
+      },
+    ],
+
     createdAt: "2023-01-01T00:00:00Z",
   },
 ];

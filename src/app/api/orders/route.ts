@@ -3,23 +3,14 @@ import { handleError } from "@/lib/handleError";
 import { getUser } from "@/lib/get-user";
 import { CreateOrderSchema, GetOrdersSchema } from "@/schemas";
 import { orderService } from "@/services/order.service";
-import { orderRepo } from "@/repo/order.repo";
-import { OrderStatus } from "@prisma/client";
 
 // GET /api/orders — BUYER sees placed, SELLER sees received (same endpoint)
 export async function GET(req: NextRequest) {
     try {
         const user = getUser(req);
         const q = GetOrdersSchema.parse(Object.fromEntries(req.nextUrl.searchParams));
-        const result = await orderRepo.listSubOrders(user.userId, {
-          status: q.status as OrderStatus,
-          page: q.page ?? 1,
-          limit: q.limit ?? 20,
-          sortBy: (q.sortBy ?? "created_desc") as
-            | "created_asc"
-            | "created_desc",
-        });
-        return NextResponse.json({ success: true, data: result });
+        const result = await orderService.getSubOrders(user.userId, q);
+        return NextResponse.json({ success: true, data: result.subOrders, meta: result.meta });
     } catch (err) {
         return handleError(err);
     }

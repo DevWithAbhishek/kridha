@@ -16,6 +16,7 @@ export function AuthGuard({ children, requireSeller }: AuthGuardProps) {
 
     useEffect(() => {
         if (loading) return;
+        // console.log("Is Seller: " + isSeller);
 
         if (!isLoggedIn) {
             router.push(`/login?redirect=${encodeURIComponent(pathname)}`);
@@ -23,7 +24,7 @@ export function AuthGuard({ children, requireSeller }: AuthGuardProps) {
         }
 
         if (requireSeller && !isSeller) {
-            router.push('/dashboard');
+            router.push('/?seller=false');
             return;
         }
     }, [isLoggedIn, isSeller, loading, requireSeller, router, pathname]);
@@ -32,6 +33,7 @@ export function AuthGuard({ children, requireSeller }: AuthGuardProps) {
         return (
             <div className="flex justify-center items-center min-h-screen">
                 <div className="space-y-4">
+                    <div>Loading...</div>
                     <SkeletonCard />
                     <SkeletonCard />
                     <SkeletonCard />

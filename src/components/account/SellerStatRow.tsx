@@ -1,21 +1,13 @@
+import { Product, SellerProfile, SubOrder } from "@/types/dashboard";
 import { ShoppingBag, IndianRupee, Star, ShieldCheck } from "lucide-react";
-
-interface SubOrder {
-    status: string;
-    totalAmount: number;
-}
-
-interface SellerProfile {
-    sellerRating: number;
-    sellerRatingCount: number;
-    reliabilityScore: number;
-}
 
 export function SellerStatRow({
     orders,
+    products,
     profile,
 }: {
     orders: SubOrder[];
+    products: Product[]
     profile: SellerProfile;
 }) {
     const activeOrders = orders.filter(

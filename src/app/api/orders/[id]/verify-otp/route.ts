@@ -17,13 +17,11 @@ export async function POST(
     return NextResponse.json({
       success: true,
       data: {
-        subOrder: {
-          id: result.subOrder.id,
-          shortId: result.subOrder.shortId,
-          status: "COMPLETED",
-        },
-        payoutId: result.payoutId,
+        id: result.subOrder.id,
+        shortId: result.subOrder.shortId,
+        status: "COMPLETED",
       },
+      payoutId: result.payoutId,
     });
   } catch (err) {
     return handleError(err);

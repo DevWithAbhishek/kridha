@@ -5,6 +5,9 @@ import { calcUnitPrice } from "@/lib/pricing";
 import { getRazorPay } from "@/lib/razorpay";
 import { isCancellable, validateTransition } from "@/lib/state-machine";
 import { calcRefundAmount } from "@/lib/refund";
+import { GetOrdersInput } from "@/schemas";
+import { orderRepo } from "@/repo/order.repo";
+import { OrderStatus } from "@/types/dashboard";
 
 export interface CreateItem {
   productId: string;
@@ -333,4 +336,15 @@ export const orderService = {
     await prisma.cartItem.deleteMany({ where: { cartSessionId: cart.id } });
     return result;
   },
+
+  async getSubOrders(userId: string, q: GetOrdersInput) {
+    return await orderRepo.listSubOrders(userId, {
+              status: q.status as OrderStatus,
+              page: q.page ?? 1,
+              limit: q.limit ?? 20,
+              sortBy: (q.sortBy ?? "created_desc") as
+                | "created_asc"
+                | "created_desc",
+            });
+  }
 };

@@ -24,10 +24,8 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({
       success: true,
       data: {
-        profile: {
-          ...profile,
-          accountNumber: maskAccount(profile.accountNumber),
-        },
+        ...profile,
+        accountNumber: maskAccount(profile.accountNumber),
       },
     });
   } catch (err) {
@@ -58,10 +56,8 @@ export async function PATCH(req: NextRequest) {
     return NextResponse.json({
       success: true,
       data: {
-        profile: {
-          ...updated,
-          accountNumber: maskAccount(updated.accountNumber),
-        },
+        ...updated,
+        accountNumber: maskAccount(updated.accountNumber),
       },
     });
   } catch (err) {

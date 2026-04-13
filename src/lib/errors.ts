@@ -301,6 +301,46 @@ export const ERR = {
     403,
   ),
 
+  // ── Admin Auth ────────────────────────────────────────────────────────
+
+  ADMIN_INVALID_CREDENTIALS: new AppError(
+    "ADMIN_INVALID_CREDENTIALS",
+    "Invalid email or password.",
+    401,
+  ),
+
+  ADMIN_ACCOUNT_LOCKED: new AppError(
+    "ADMIN_ACCOUNT_LOCKED",
+    "Account locked. Contact super admin.",
+    403,
+  ),
+
+  ADMIN_FORBIDDEN: new AppError(
+    "ADMIN_FORBIDDEN",
+    "This action requires higher admin privileges.",
+    403,
+  ),
+
+  // ── Seller Admin Actions ───────────────────────────────────────────────
+
+  SELLER_NOT_FOUND: new AppError(
+    "SELLER_NOT_FOUND",
+    "Seller profile not found.",
+    404,
+  ),
+
+  SELLER_ALREADY_VERIFIED: new AppError(
+    "SELLER_ALREADY_VERIFIED",
+    "Seller is already verified.",
+    409,
+  ),
+
+  SELLER_ALREADY_SUSPENDED: new AppError(
+    "SELLER_ALREADY_SUSPENDED",
+    "Seller is already suspended.",
+    409,
+  ),
+
   // ── External Services ─────────────────────────────────────────────────
 
   // 502 — Razorpay API call failed (retryable)

@@ -44,15 +44,13 @@ export async function GET(req: NextRequest) {
 
     return NextResponse.json({
       success: true,
-      data: {
-        notifications,
-        unreadCount, // always returned regardless of filter — used for badge
-        meta: {
-          page: safePage,
-          limit: safeLimit,
-          total,
-          hasMore: (safePage - 1) * safeLimit + notifications.length < total,
-        },
+      data: notifications,
+      unreadCount, // always returned regardless of filter — used for badge
+      meta: {
+        page: safePage,
+        limit: safeLimit,
+        total,
+        hasMore: (safePage - 1) * safeLimit + notifications.length < total,
       },
     });
   } catch (err) {

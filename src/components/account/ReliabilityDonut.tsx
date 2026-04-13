@@ -1,8 +1,8 @@
 export default function ReliabilityDonut({
-    score,
+    rating,
     size = "md",
 }: {
-    score: number;
+    rating: number;
     size?: "sm" | "md" | "lg";
 }) {
     const sizeMap = {
@@ -13,7 +13,7 @@ export default function ReliabilityDonut({
 
     return (
         <div className="p-5 rounded-card border bg-surface text-center">
-            <h3 className="font-bold mb-4">Reliability Score</h3>
+            <h3 className="font-bold mb-4">Reliability rating</h3>
 
             <svg viewBox="0 0 36 36" className={`-rotate-90 ${sizeMap[size]}`}>
                 <circle
@@ -30,13 +30,13 @@ export default function ReliabilityDonut({
                     r="15.9"
                     stroke="#2A9D8F"
                     strokeWidth="3"
-                    strokeDasharray={`${score} ${100 - score}`}
+                    strokeDasharray={`${rating} ${100 - rating}`}
                     strokeLinecap="round"
                     fill="none"
                 />
             </svg>
 
-            <div className="mt-2 font-bold">{score}%</div>
+            <div className="mt-2 font-bold">{rating}%</div>
         </div>
     );
 }

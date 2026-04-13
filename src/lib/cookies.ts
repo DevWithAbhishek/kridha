@@ -39,6 +39,16 @@ export function setAuthCookies(
     path: "/",
     maxAge: 60 * 60 * 24 * 365,
   });
+
+  const accessExp = Math.floor(Date.now() / 1000) + 15 * 60; // 15 min from now
+
+  res.cookies.set("kridha_access_exp", String(accessExp), {
+    httpOnly: false, // Must be readable by JS
+    secure: process.env.NODE_ENV === "production",
+    sameSite: "strict",
+    path: "/",
+    maxAge: 15 * 60, // Same lifetime as access token
+  });
 }
 
 export function clearAuthCookies(res: NextResponse): void {

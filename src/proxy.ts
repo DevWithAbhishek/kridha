@@ -12,6 +12,11 @@ interface JwtPayload {
   userId: string;
   roles: string[];
 }
+interface AdminJwtPayload {
+  adminId: string;
+  role: string;
+  type: "admin";
+}
 
 const redis = new Redis({
   url: process.env.UPSTASH_REDIS_REST_URL!,
@@ -31,6 +36,13 @@ const authLimiter = new Ratelimit({
   analytics: false,
 });
 
+// Admin login is rate-limited the hardest — 2 attempts per minute per IP
+const adminAuthLimiter = new Ratelimit({
+  redis,
+  limiter: Ratelimit.slidingWindow(2, "1 m"),
+  analytics: false,
+});
+
 const PUBLIC_EXACT = new Set([
   "/api/auth/signup",
   "/api/auth/login",
@@ -40,6 +52,7 @@ const PUBLIC_EXACT = new Set([
   "/api/health",
   "/api/webhooks/razorpay",
   "/api/pincode",
+  "/api/admin/auth/login", // admin login is public (has its own limiter)
 ]);
 
 const PUBLIC_GET_PATTERNS = [
@@ -55,6 +68,28 @@ const AUTH_PATHS = new Set([
   "/api/auth/reset-pin",
 ]);
 
+function unauthenticated() {
+  return NextResponse.json(
+    {
+      success: false,
+      code: "UNAUTHENTICATED",
+      message: "Please login to continue.",
+    },
+    { status: 401 },
+  );
+}
+
+function rateLimited(remaining: number) {
+  return NextResponse.json(
+    {
+      success: false,
+      code: "RATE_LIMITED",
+      message: "Too many requests. Try again later.",
+    },
+    { status: 429, headers: { "X-RateLimit-Remaining": String(remaining) } },
+  );
+}
+
 export async function proxy(req: NextRequest) {
   const { pathname } = req.nextUrl;
 
@@ -62,9 +97,51 @@ export async function proxy(req: NextRequest) {
   if (pathname.startsWith("/api/cron/")) {
     const auth = req.headers.get("authorization");
     if (auth !== `Bearer ${process.env.CRON_SECRET}`) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+      return unauthenticated();
     }
     return NextResponse.next();
+  }
+
+  // ── Admin routes: /api/admin/* ─────────────────────────────────────────
+  // Handled BEFORE user auth — completely separate path.
+  if (pathname.startsWith("/api/admin/")) {
+    // Admin login route: rate limit hard, then pass through (no token needed)
+    if (pathname === "/api/admin/auth/login") {
+      const ip = req.headers.get("x-forwarded-for") ?? "127.0.0.1";
+      try {
+        const { success, remaining } = await adminAuthLimiter.limit(
+          `admin_login:${ip}`,
+        );
+        if (!success) {
+          logger.warn({ ip, path: pathname }, "Admin login rate limited");
+          return rateLimited(remaining);
+        }
+      } catch (err) {
+        logger.error({ err }, "Admin rate limiter failed");
+      }
+      return NextResponse.next();
+    }
+
+    // All other /api/admin/* routes: verify kridha_admin cookie
+    const adminToken = req.cookies.get("kridha_admin")?.value;
+    if (!adminToken) return unauthenticated();
+
+    try {
+      const payload = jwt.verify(
+        adminToken,
+        process.env.ADMIN_JWT_SECRET!,
+      ) as AdminJwtPayload;
+
+      // type guard — reject user tokens even if somehow signed with same secret
+      if (payload.type !== "admin") return unauthenticated();
+
+      const headers = new Headers(req.headers);
+      headers.set("x-admin-id", payload.adminId);
+      headers.set("x-admin-role", payload.role);
+      return NextResponse.next({ request: { headers } });
+    } catch {
+      return unauthenticated();
+    }
   }
 
   // Fully public routes
@@ -121,14 +198,7 @@ export async function proxy(req: NextRequest) {
 
   // Protected — require valid access token
   if (!token) {
-    return NextResponse.json(
-      {
-        success: false,
-        code: "UNAUTHENTICATED",
-        message: "Please login to continue.",
-      },
-      { status: 401 },
-    );
+    return unauthenticated();
   }
 
   try {
@@ -143,14 +213,7 @@ export async function proxy(req: NextRequest) {
     if (refresh) {
       return NextResponse.redirect(new URL("/api/auth/refresh", req.url));
     }
-    return NextResponse.json(
-      {
-        success: false,
-        code: "UNAUTHENTICATED",
-        message: "Please login to continue.",
-      },
-      { status: 401 },
-    );
+    return unauthenticated();
   }
 }
 

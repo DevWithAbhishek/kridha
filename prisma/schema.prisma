@@ -264,6 +264,42 @@ model OtpRequest {
   @@index([phone, expiresAt])
 }
 
+enum AdminRole {
+  REVIEWER    // can verify/reject sellers
+  SUPER_ADMIN // can also suspend, create admins, see unmasked bank details
+}
+
+model AdminUser {
+  id           String    @id @default(cuid())
+  email        String    @unique
+  passwordHash String    // bcrypt — NOT argon2 (faster is fine here, login rate-limited hard)
+  name         String
+  role         AdminRole @default(REVIEWER)
+  lastLoginAt  DateTime?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  actions AdminAuditLog[]
+
+  @@index([email])
+}
+
+// Every admin action is logged. Immutable — no update/delete.
+model AdminAuditLog {
+  id          String    @id @default(cuid())
+  adminId     String
+  admin       AdminUser @relation(fields: [adminId], references: [id])
+  action      String    // e.g. "VERIFY_SELLER", "REJECT_SELLER", "SUSPEND_SELLER"
+  targetType  String    // e.g. "SellerProfile"
+  targetId    String    // e.g. seller userId
+  note        String?   // optional reason / comment
+  metadata    Json?     // previous state snapshot for auditing
+  createdAt   DateTime  @default(now())
+
+  @@index([adminId])
+  @@index([targetId])
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // 4. PRODUCT
 // Latitude/longitude on Product (not SellerProfile) because a seller can

@@ -48,13 +48,13 @@ export default function NotifPanel({
             </div>
 
             <div className="max-h-72 overflow-y-auto divide-y divide-border">
-                {notifications.length === 0 && (
+                {notifications?.length === 0 && (
                     <div className="p-8 text-center text-muted">
                         कोई सूचना नहीं
                     </div>
                 )}
 
-                {notifications.map((n) => (
+                {notifications?.map((n) => (
                     <div
                         key={n.id}
                         className={`px-5 py-3.5 flex gap-3 ${!n.read &&

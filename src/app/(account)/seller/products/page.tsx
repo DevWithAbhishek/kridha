@@ -3,7 +3,7 @@
 import { Product } from "@/types/dashboard";
 import { useState } from "react";
 import { AddProductModal } from "@/components/modals/AddProductModal";
-import EditProductModal from "@/components/modals/EditProductModal";
+import {EditProductModal} from "@/components/modals/EditProductModal";
 import DeleteProductModal from "@/components/modals/DeleteProductModal";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 
@@ -56,15 +56,48 @@ export default function SellerProductsPage() {
                 {filtered.map((p: Product) => (
                     <div
                         key={p.id}
-                        className="flex justify-between px-5 py-3 border-b"
+                        className="flex gap-4 px-5 py-4 border-b items-center"
                     >
-                        <div>
-                            <div>{p.nameHi}</div>
-                            <div className="text-muted text-sm">
-                                {p.category}
+                        {/* IMAGE */}
+                        <div className="w-16 h-16 rounded-lg overflow-hidden border">
+                            {p.imageUrls?.[0] ? (
+                                <img
+                                    src={p.imageUrls[0]}
+                                    alt={p.nameEn}
+                                    className="w-full h-full object-cover"
+                                />
+                            ) : (
+                                <div className="w-full h-full flex items-center justify-center text-xs text-muted">
+                                    No Image
+                                </div>
+                            )}
+                        </div>
+
+                        {/* DETAILS */}
+                        <div className="flex-1">
+                            <div className="font-semibold">
+                                {p.nameHi || p.nameEn}
+                            </div>
+
+                            <div className="text-sm text-muted">
+                                {p.category} • {p.unit}
+                            </div>
+
+                            {/* STOCK */}
+                            <div className="text-xs mt-1">
+                                Stock: {p.available}
+                            </div>
+
+                            {/* STATUS */}
+                            <div
+                                className={`text-xs mt-1 font-medium ${p.available > 0 ? "text-green-600" : "text-red-500"
+                                    }`}
+                            >
+                                {p.available > 0 ? "In Stock" : "Out of Stock"}
                             </div>
                         </div>
 
+                        {/* ACTIONS */}
                         {/* <div className="flex gap-3">
                             <button onClick={() => setEditingProduct(p)}>Edit</button>
                             <button
@@ -74,6 +107,8 @@ export default function SellerProductsPage() {
                     </div>
                 ))}
             </div>
+            
+
             {/* ✅ ADD MODAL */}
             <AddProductModal
                 open={isAddOpen}

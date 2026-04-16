@@ -23,7 +23,7 @@ const securityHeaders = [
       "script-src 'self' 'unsafe-eval' 'unsafe-inline' checkout.razorpay.com",
       "img-src 'self' res.cloudinary.com data: blob:",
       // GlitchTip endpoint replaces *.sentry.io
-      "connect-src 'self' *.neon.tech *.upstash.io app.glitchtip.com api.razorpay.com",
+      "connect-src 'self' https://api.cloudinary.com *.neon.tech *.upstash.io app.glitchtip.com api.razorpay.com",
       "font-src 'self' data:",
       "style-src 'self' 'unsafe-inline'",
     ].join("; "),

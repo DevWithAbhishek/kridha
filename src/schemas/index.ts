@@ -304,49 +304,32 @@ export const GetSellerProductsSchema = z.object({
   status: z.enum(["ACTIVE", "DELETED"]).optional().default("ACTIVE"),
 });
 
-export const AddProductSchema = z
-  .object({
-    // nameEn not name — matches Prisma Product.nameEn field
-    nameEn: z.string().min(2).max(200),
-    nameHi: z.string().max(200).optional(),
-    description: z.string().optional(),
-    category: ProductCategoryEnum,
-    isBranded: z.boolean().optional().default(false),
-    imageUrls: z.array(z.url()).max(5).optional(),
-    blurHash: z.string().optional(),
-    available: z.number().positive(),
-    minOrderQuantity: z.number().positive(),
-    maxOrderQuantity: z.number().positive().optional(),
-    unit: ProductUnitEnum,
-    unitIncrement: z.number().positive(),
-    priceTiers: z.array(PriceTierSchema).min(1),
-    latitude: z.number().min(8).max(37),
-    longitude: z.number().min(68).max(98),
-    // Deal fields removed — deals are created via POST /api/products/:id/deal
-  })
-  .superRefine((data, ctx) => {
-    if (
-      data.imageUrls &&
-      data.imageUrls.length > 0 &&
-      (!data.blurHash || data.blurHash.trim() === "")
-    ) {
-      ctx.addIssue({
-        code: "custom",
-        message: "blurHash is required when imageUrls are provided",
-        path: ["blurHash"],
-      });
-    }
-    if (
-      data.maxOrderQuantity !== undefined &&
-      data.maxOrderQuantity < data.minOrderQuantity
-    ) {
-      ctx.addIssue({
-        code: "custom",
-        message: "maxOrderQty must be greater than or equal to minOrderQty",
-        path: ["maxOrderQty"],
-      });
-    }
-  });
+export const AddProductBaseSchema = z.object({
+  nameEn: z.string().min(2).max(200),
+  nameHi: z.string().max(200).optional(),
+  description: z.string().optional(),
+  category: ProductCategoryEnum,
+  isBranded: z.boolean().default(false),
+  imageUrls: z.array(z.url()).max(5).optional(),
+  blurHash: z.string().optional(),
+  available: z.number().nonnegative(),
+  minOrderQuantity: z.number().positive(),
+  maxOrderQuantity: z.number().positive().optional(),
+  unit: ProductUnitEnum,
+  unitIncrement: z.number().positive(),
+  priceTiers: z.array(PriceTierSchema).min(1),
+  latitude: z.number().min(8).max(37),
+  longitude: z.number().min(68).max(98),
+});
+
+export const AddProductSchema = AddProductBaseSchema.refine(
+  (data) =>
+    !data.maxOrderQuantity || data.maxOrderQuantity >= data.minOrderQuantity,
+  {
+    message: "MAX_QTY_INVALID",
+    path: ["maxOrderQuantity"],
+  },
+);
 
 export const UpdateProductSchema = z
   .object({

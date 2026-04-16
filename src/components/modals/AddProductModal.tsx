@@ -1,255 +1,450 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useCallback } from 'react';
 import { useForm, useFieldArray } from 'react-hook-form';
 import { z } from 'zod';
 import { zodResolver } from '@hookform/resolvers/zod';
 import * as Dialog from '@radix-ui/react-dialog';
-import { X, Plus, Trash2 } from 'lucide-react';
+import { X, Trash2, Upload, Loader2 } from 'lucide-react';
 import { Input } from '@/components/ui/Input';
 import { Button } from '@/components/ui/Button';
+import Image from 'next/image';
+import { AddProductBaseSchema } from '@/schemas';
+import { ProductCategory, ProductUnit } from '@prisma/client';
+import { useLangStore } from '@/stores/langStore';
+import { useGeolocation } from '@/hooks/useGeolocation';
+import { api } from '@/lib/api';
 
-const schema = z.object({
-    nameEn: z.string().min(2).max(100),
-    nameHi: z.string().optional(),
-    category: z.enum(['GRAINS', 'DAIRY', 'OIL', 'SPICES', 'FLOUR', 'VEGETABLES', 'PULSES', 'BEVERAGES', 'OTHER']),
-    unit: z.enum(['KG', 'GRAM', 'LITRE', 'ML', 'PIECE', 'DOZEN', 'QUINTAL', 'TON', 'BUNDLE']),
-    unitIncrement: z.number().positive(),
-    minOrderQuantity: z.number().positive(),
-    available: z.number().nonnegative(),
-    priceTiers: z.array(z.object({ minQty: z.number().positive(), pricePerUnit: z.number().positive() })).min(1),
+const AddProductFormSchema = AddProductBaseSchema.omit({
+    latitude: true,
+    longitude: true,
 });
 
-type FormValues = z.infer<typeof schema>;
+// Extracted from Cloudinary widget result
+interface UploadedImage {
+    url: string;  // secure_url
+    publicId: string;  // public_id — needed for deletion
+}
 
-interface AddProductModalProps {
+type FormValues = z.input<typeof AddProductFormSchema>;
+
+interface Props {
     open: boolean;
     onClose: () => void;
     onSave: () => void;
 }
 
-function useGeolocation() {
-    const [coords, setCoords] = useState<{ lat: number; lng: number } | null>(null);
+// ── Cloudinary signed upload helper ─────────────────────────────────────────
+// Browser sends the file directly to Cloudinary using a server-issued signature.
+// The API secret never touches the client.
+async function uploadToCloudinary(
+    file: File,
+    folder: string = "products",
+): Promise<UploadedImage> {
+    // 1. Get signature from Kridha server
+    const { data: sigData } = await api.post<{
+        success: true;
+        data: { signature: string; timestamp: number; cloudName: string; apiKey: string; folder: string };
+    }>('/upload/sign', { folder });
 
-    useState(() => {
-        if (!navigator.geolocation) return;
-        navigator.geolocation.getCurrentPosition(
-            (position) => {
-                setCoords({
-                    lat: position.coords.latitude,
-                    lng: position.coords.longitude,
-                });
-            },
-            () => undefined,
-            { maximumAge: 1000 * 60 * 5, timeout: 10000 }
-        );
-    });
+    const { signature, timestamp, cloudName, apiKey, folder: signedFolder } = sigData.data;
 
-    return { coords };
+    // 2. Upload directly to Cloudinary
+    const form = new FormData();
+    form.append('file', file);
+    form.append('signature', signature);
+    form.append('timestamp', String(timestamp));
+    form.append('api_key', apiKey);
+    form.append('folder', signedFolder);
+
+    const res = await fetch(
+        `https://api.cloudinary.com/v1_1/${cloudName}/image/upload`,
+        { method: 'POST', body: form },
+    );
+
+    if (!res.ok) throw new Error('Cloudinary upload failed');
+
+    const data = await res.json() as { secure_url: string; public_id: string };
+    return { url: data.secure_url, publicId: data.public_id };
 }
 
-export function AddProductModal({ open, onClose, onSave }: AddProductModalProps) {
+// ── Delete from Cloudinary via Kridha destroy route ─────────────────────────
+async function deleteFromCloudinary(publicId: string): Promise<void> {
+    await api.delete('/upload/destroy', { data: { publicId } });
+}
+
+// ── Step indicator ────────────────────────────────────────────────────────────
+function StepDots({ current, total }: { current: number; total: number }) {
+    return (
+        <div className="flex justify-center gap-2 mb-6">
+            {Array.from({ length: total }).map((_, i) => (
+                <div
+                    key={i}
+                    className={`w-2.5 h-2.5 rounded-full transition-colors ${i + 1 === current ? 'bg-kridha-primary' : 'bg-gray-300 dark:bg-gray-600'
+                        }`}
+                />
+            ))}
+        </div>
+    );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+export function AddProductModal({ open, onClose, onSave }: Props) {
+    const { lang } = useLangStore();
+    const { lat, lng } = useGeolocation();
+
+    const [images, setImages] = useState<UploadedImage[]>([]);
+    const [uploading, setUploading] = useState(false);
+    const [uploadErr, setUploadErr] = useState<string | null>(null);
     const [step, setStep] = useState(1);
-    const { coords } = useGeolocation();
+    const [submitErr, setSubmitErr] = useState<string | null>(null);
 
     const {
         register,
         handleSubmit,
         control,
+        trigger,
         formState: { errors, isSubmitting },
-        watch,
+        reset,
     } = useForm<FormValues>({
-        resolver: zodResolver(schema),
+        resolver: zodResolver(AddProductFormSchema),
         defaultValues: {
             priceTiers: [{ minQty: 1, pricePerUnit: 0 }],
+            isBranded: false,
+            available: 0,
+            minOrderQuantity: 1,
         },
     });
 
-    const { fields, append, remove } = useFieldArray({
-        control,
-        name: 'priceTiers',
-    });
+    const { fields, append, remove } = useFieldArray({ control, name: 'priceTiers' });
 
-    async function onSubmit(values: FormValues) {
+    // ── Step validation before advancing ─────────────────────────────────────
+    // Validates only the fields on the current step — prevents advancing with errors.
+    const STEP_FIELDS: (keyof FormValues)[][] = [
+        ['nameEn', 'nameHi', 'category', 'unit', 'unitIncrement'],
+        ['available', 'minOrderQuantity', 'priceTiers'],
+        [],
+    ];
+
+    async function goNext() {
+        const valid = await trigger(STEP_FIELDS[step - 1] as (keyof FormValues)[]);
+        if (valid) setStep(s => s + 1);
+    }
+
+    // ── File input handler — signed upload ────────────────────────────────────
+    const handleFileChange = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
+        const files = Array.from(e.target.files ?? []);
+        if (!files.length) return;
+
+        // Limit total images to 5
+        if (images.length + files.length > 5) {
+            setUploadErr(lang === 'hi' ? 'अधिकतम 5 images allowed' : 'Maximum 5 images allowed');
+            return;
+        }
+
+        setUploading(true);
+        setUploadErr(null);
+
         try {
-            const res = await fetch('/api/products', {
-                method: 'POST',
-                credentials: 'include',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    ...values,
-                    latitude: coords?.lat,
-                    longitude: coords?.lng,
-                }),
-            });
-            if (res.ok) {
-                onSave();
-                onClose();
-            }
+            const results = await Promise.all(files.map(f => uploadToCloudinary(f, 'products')));
+            setImages(prev => [...prev, ...results]);
         } catch {
-            // Handle error
+            setUploadErr(lang === 'hi' ? 'Upload failed — retry करें' : 'Upload failed — please retry');
+        } finally {
+            setUploading(false);
+            e.target.value = ''; // reset input so same file can be re-selected after error
+        }
+    }, [images.length, lang]);
+
+    // ── Remove image — deletes from Cloudinary too ────────────────────────────
+    async function removeImage(index: number) {
+        const img = images[index];
+        setImages(prev => prev.filter((_, i) => i !== index));
+        // Best-effort delete — don't block UI if it fails
+        deleteFromCloudinary(img.publicId).catch(() => null);
+    }
+
+    // ── Submit ────────────────────────────────────────────────────────────────
+    async function onSubmit(values: FormValues) {
+        setSubmitErr(null);
+        console.log("Product api called");
+        try {
+            if (!lat || !lng) {
+                setSubmitErr("Location not ready");
+                return;
+            }
+
+            const res = await api.post('/products', {
+                ...values,
+                imageUrls: images.map(i => i.url),
+                latitude: lat,
+                longitude: lng,
+            });
+            console.log("Res generated", res);
+
+            if (res.status === 201) {
+                onSave();
+                handleClose();
+            }
+        } catch (err) {
+            console.log(err);
+            setSubmitErr(lang === 'hi' ? 'Product add नहीं हुआ — retry करें' : 'Failed to add product — please retry');
         }
     }
 
-    const nextStep = () => setStep((prev) => prev + 1);
-    const prevStep = () => setStep((prev) => prev - 1);
+    function handleClose() {
+        reset();
+        setImages([]);
+        setStep(1);
+        setSubmitErr(null);
+        setUploadErr(null);
+        onClose();
+    }
+
+    const CATEGORIES = Object.values(ProductCategory);
+    const UNITS = Object.values(ProductUnit);
+    console.log(errors);
 
     return (
-        <Dialog.Root open={open} onOpenChange={onClose}>
+        <Dialog.Root open={open} onOpenChange={o => !o && handleClose()}>
             <Dialog.Portal>
-                <Dialog.Overlay className="fixed inset-0 bg-black/50 z-overlay animate-fade-in" />
-                <Dialog.Content className="fixed inset-0 sm:inset-auto sm:top-1/2 sm:left-1/2 sm:-translate-x-1/2 sm:-translate-y-1/2 w-full sm:max-w-2xl bg-[var(--color-surface)] rounded-t-modal sm:rounded-modal p-6 shadow-modal animate-slide-in-up sm:animate-scale-in z-modal max-h-[90vh] overflow-y-auto">
+                <Dialog.Overlay className="fixed inset-0 bg-black/50 z-overlay" />
+                <Dialog.Content className="fixed inset-0 sm:inset-auto sm:top-1/2 sm:left-1/2 sm:-translate-x-1/2 sm:-translate-y-1/2 w-full sm:max-w-2xl bg-[var(--color-surface)] rounded-t-modal sm:rounded-modal p-6 shadow-modal z-modal max-h-[90vh] overflow-y-auto">
+
+                    {/* Header */}
                     <div className="flex items-center justify-between mb-6">
-                        <h2 className="text-h5 font-bold">Add Product</h2>
-                        <button type="button" onClick={onClose} className="p-2 rounded-btn hover:bg-background-subtle">
-                            <X className="w-5 h-5" />
-                        </button>
+                        <Dialog.Title className="text-h5 font-bold">
+                            {lang === 'hi' ? 'Product जोड़ें' : 'Add Product'}
+                        </Dialog.Title>
+                        <button onClick={handleClose} aria-label="Close"><X className="w-5 h-5" /></button>
                     </div>
 
-                    <div className="flex justify-center gap-2 mb-8">
-                        {[1, 2, 3].map((s) => (
-                            <div
-                                key={s}
-                                className={`w-3 h-3 rounded-full ${s < step ? 'bg-kridha-primary/40' : s === step ? 'bg-kridha-primary' : 'bg-gray-200'
-                                    }`}
-                            />
-                        ))}
-                    </div>
+                    <StepDots current={step} total={3} />
 
                     <form onSubmit={handleSubmit(onSubmit)} className="space-y-5">
+
+                        {/* ── STEP 1: Basic Info ─────────────────────────────────────── */}
                         {step === 1 && (
                             <>
-                                <Input
-                                    label="Name (English)"
-                                    {...register('nameEn')}
-                                    error={errors.nameEn?.message}
-                                />
-                                <Input
-                                    label="Name (Hindi)"
-                                    {...register('nameHi')}
-                                    error={errors.nameHi?.message}
-                                />
-                                <div>
-                                    <label className="text-label-sm text-[var(--color-text-muted)]">Category</label>
-                                    <select
-                                        className="w-full mt-2 rounded-lg border border-[var(--color-border)] bg-surface px-4 py-3"
-                                        {...register('category')}
-                                    >
-                                        <option value="GRAINS">Grains</option>
-                                        <option value="DAIRY">Dairy</option>
-                                        <option value="OIL">Oil</option>
-                                        <option value="SPICES">Spices</option>
-                                        <option value="FLOUR">Flour</option>
-                                        <option value="VEGETABLES">Vegetables</option>
-                                        <option value="PULSES">Pulses</option>
-                                        <option value="BEVERAGES">Beverages</option>
-                                        <option value="OTHER">Other</option>
-                                    </select>
+                                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                                    <Input
+                                        label="Name (English) *"
+                                        {...register('nameEn')}
+                                        error={errors.nameEn?.message}
+                                    />
+                                    <Input
+                                        label="Name (Hindi) *"
+                                        {...register('nameHi')}
+                                        error={errors.nameHi?.message}
+                                    />
                                 </div>
-                                <div>
-                                    <label className="text-label-sm text-[var(--color-text-muted)]">Unit</label>
-                                    <select
-                                        className="w-full mt-2 rounded-lg border border-[var(--color-border)] bg-surface px-4 py-3"
-                                        {...register('unit')}
-                                    >
-                                        <option value="KG">KG</option>
-                                        <option value="GRAM">GRAM</option>
-                                        <option value="LITRE">LITRE</option>
-                                        <option value="ML">ML</option>
-                                        <option value="PIECE">PIECE</option>
-                                        <option value="DOZEN">DOZEN</option>
-                                        <option value="QUINTAL">QUINTAL</option>
-                                        <option value="TON">TON</option>
-                                        <option value="BUNDLE">BUNDLE</option>
-                                    </select>
-                                </div>
+
                                 <Input
-                                    label="Unit Increment"
+                                    label="Description"
+                                    {...register('description')}
+                                />
+
+                                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                                    <div>
+                                        <label className="text-label-md font-medium block mb-1">Category *</label>
+                                        <select
+                                            {...register('category')}
+                                            className="w-full border border-border-DEFAULT dark:border-border-dark rounded-lg px-3 py-2.5 bg-[var(--color-surface)] text-[var(--color-text)] text-body-sm outline-none focus:border-kridha-primary"
+                                        >
+                                            {CATEGORIES.map(c => <option key={c} value={c}>{c}</option>)}
+                                        </select>
+                                        {errors.category && <p className="text-error text-label-xs mt-1">{errors.category.message}</p>}
+                                    </div>
+
+                                    <div>
+                                        <label className="text-label-md font-medium block mb-1">Unit *</label>
+                                        <select
+                                            {...register('unit')}
+                                            className="w-full border border-border-DEFAULT dark:border-border-dark rounded-lg px-3 py-2.5 bg-[var(--color-surface)] text-[var(--color-text)] text-body-sm outline-none focus:border-kridha-primary"
+                                        >
+                                            {UNITS.map(u => <option key={u} value={u}>{u}</option>)}
+                                        </select>
+                                        {errors.unit && <p className="text-error text-label-xs mt-1">{errors.unit.message}</p>}
+                                    </div>
+                                </div>
+
+                                <Input
+                                    label="Unit Increment *"
                                     type="number"
                                     {...register('unitIncrement', { valueAsNumber: true })}
                                     error={errors.unitIncrement?.message}
                                 />
-                                <Button type="button" variant="primary" onClick={nextStep}>
-                                    Next
+
+                                <label className="flex items-center gap-2 cursor-pointer select-none">
+                                    <input type="checkbox" {...register('isBranded')} className="w-4 h-4 rounded" />
+                                    <span className="text-body-sm">Branded Product</span>
+                                </label>
+
+                                <Button type="button" variant="primary" size="lg" className="w-full" onClick={goNext}>
+                                    {lang === 'hi' ? 'आगे →' : 'Next →'}
                                 </Button>
                             </>
                         )}
 
+                        {/* ── STEP 2: Stock & Pricing ────────────────────────────────── */}
                         {step === 2 && (
                             <>
-                                <Input
-                                    label="Available Stock"
-                                    type="number"
-                                    {...register('available', { valueAsNumber: true })}
-                                    error={errors.available?.message}
-                                />
-                                <Input
-                                    label="Min Order Quantity"
-                                    type="number"
-                                    {...register('minOrderQuantity', { valueAsNumber: true })}
-                                    error={errors.minOrderQuantity?.message}
-                                />
+                                <div className="grid grid-cols-3 gap-3">
+                                    <Input
+                                        label="Available *"
+                                        type="number"
+                                        {...register('available', { valueAsNumber: true })}
+                                        error={errors.available?.message}
+                                    />
+                                    <Input
+                                        label="Min Qty *"
+                                        type="number"
+                                        {...register('minOrderQuantity', { valueAsNumber: true })}
+                                        error={errors.minOrderQuantity?.message}
+                                    />
+                                    <Input
+                                        label="Max Qty"
+                                        type="number"
+                                        {...register('maxOrderQuantity', { valueAsNumber: true })}
+                                        error={errors.maxOrderQuantity?.message}
+                                    />
+                                </div>
+
+                                {/* Price tiers */}
                                 <div>
-                                    <label className="text-label-sm text-[var(--color-text-muted)]">Price Tiers</label>
-                                    <div className="space-y-3 mt-2">
-                                        {fields.map((field, index) => (
-                                            <div key={field.id} className="flex gap-3 items-end">
+                                    <p className="text-label-md font-semibold mb-2">Price Tiers *</p>
+                                    <div className="space-y-2">
+                                        {fields.map((field, i) => (
+                                            <div key={field.id} className="grid grid-cols-[1fr_1fr_auto] gap-2 items-end">
                                                 <Input
-                                                    label="Min Qty"
+                                                    label={i === 0 ? 'Min Qty' : ''}
                                                     type="number"
-                                                    {...register(`priceTiers.${index}.minQty`, { valueAsNumber: true })}
+                                                    placeholder="Min qty"
+                                                    {...register(`priceTiers.${i}.minQty`, { valueAsNumber: true })}
+                                                    error={errors.priceTiers?.[i]?.minQty?.message}
                                                 />
                                                 <Input
-                                                    label="Price per Unit"
+                                                    label={i === 0 ? 'Price / Unit (₹)' : ''}
                                                     type="number"
-                                                    {...register(`priceTiers.${index}.pricePerUnit`, { valueAsNumber: true })}
+                                                    placeholder="₹ per unit"
+                                                    {...register(`priceTiers.${i}.pricePerUnit`, { valueAsNumber: true })}
+                                                    error={errors.priceTiers?.[i]?.pricePerUnit?.message}
                                                 />
-                                                <button
-                                                    type="button"
-                                                    onClick={() => remove(index)}
-                                                    className="p-2 rounded-btn hover:bg-error-light"
-                                                >
-                                                    <Trash2 className="w-4 h-4 text-error" />
-                                                </button>
+                                                {fields.length > 1 && (
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => remove(i)}
+                                                        className="mb-0.5 p-2 text-error hover:bg-error-light rounded-lg"
+                                                        aria-label="Remove tier"
+                                                    >
+                                                        <Trash2 className="w-4 h-4" />
+                                                    </button>
+                                                )}
                                             </div>
                                         ))}
-                                        <Button
-                                            type="button"
-                                            variant="outline"
-                                            size="sm"
-                                            onClick={() => append({ minQty: 1, pricePerUnit: 0 })}
-                                        >
-                                            <Plus className="w-4 h-4 mr-2" />
-                                            Add Tier
-                                        </Button>
                                     </div>
-                                </div>
-                                <div className="flex gap-3">
-                                    <Button type="button" variant="ghost" onClick={prevStep}>
-                                        Back
+                                    <Button
+                                        type="button"
+                                        variant="outline"
+                                        size="sm"
+                                        className="mt-2"
+                                        onClick={() => append({ minQty: 1, pricePerUnit: 0 })}
+                                    >
+                                        + Add Tier
                                     </Button>
-                                    <Button type="button" variant="primary" onClick={nextStep}>
-                                        Next
+                                </div>
+
+                                <div className="flex gap-3">
+                                    <Button type="button" variant="outline" size="lg" className="flex-1" onClick={() => setStep(1)}>← Back</Button>
+                                    <Button type="button" variant="primary" size="lg" className="flex-1" onClick={goNext}>{lang === 'hi' ? 'आगे →' : 'Next →'}</Button>
+                                </div>
+                            </>
+                        )}
+
+                        {/* ── STEP 3: Images & Location ─────────────────────────────── */}
+                        {step === 3 && (
+                            <>
+                                {/* Image upload area */}
+                                <div>
+                                    <p className="text-label-md font-semibold mb-2">
+                                        {lang === 'hi' ? 'Product Images (अधिकतम 5)' : 'Product Images (max 5)'}
+                                    </p>
+
+                                    {/* Uploaded image previews */}
+                                    {images.length > 0 && (
+                                        <div className="flex gap-2 flex-wrap mb-3">
+                                            {images.map((img, i) => (
+                                                <div key={img.publicId} className="relative group w-16 h-16 rounded-lg overflow-hidden border border-border-DEFAULT">
+                                                    <Image
+                                                        src={img.url}
+                                                        alt={`product ${i + 1}`}
+                                                        fill
+                                                        className="object-cover"
+                                                    />
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => removeImage(i)}
+                                                        className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 flex items-center justify-center transition-opacity"
+                                                        aria-label="Remove image"
+                                                    >
+                                                        <Trash2 className="w-4 h-4 text-white" />
+                                                    </button>
+                                                </div>
+                                            ))}
+                                        </div>
+                                    )}
+
+                                    {/* Upload button — file input triggers signed upload */}
+                                    {images.length < 5 && (
+                                        <label className="cursor-pointer">
+                                            <input
+                                                type="file"
+                                                accept="image/jpeg,image/png,image/webp"
+                                                multiple
+                                                className="sr-only"
+                                                onChange={handleFileChange}
+                                                disabled={uploading}
+                                            />
+                                            <div className={`flex items-center gap-2 px-4 py-2.5 border-2 border-dashed rounded-xl text-body-sm transition-colors w-fit ${uploading
+                                                    ? 'border-kridha-primary/40 text-kridha-primary animate-pulse'
+                                                    : 'border-border-DEFAULT dark:border-border-dark hover:border-kridha-primary text-muted-DEFAULT'
+                                                }`}>
+                                                {uploading
+                                                    ? <><Loader2 className="w-4 h-4 animate-spin" />{lang === 'hi' ? 'Upload हो रहा है...' : 'Uploading...'}</>
+                                                    : <><Upload className="w-4 h-4" />{lang === 'hi' ? 'Images चुनें' : 'Choose images'}</>
+                                                }
+                                            </div>
+                                        </label>
+                                    )}
+
+                                    {uploadErr && (
+                                        <p className="text-error text-label-xs mt-1">{uploadErr}</p>
+                                    )}
+                                </div>
+
+                                {/* Location status */}
+                                <div className="text-label-sm text-muted-DEFAULT dark:text-muted-dark flex items-center gap-1.5">
+                                    <span className={`w-2 h-2 rounded-full inline-block ${lat && lng ? 'bg-success-dark' : 'bg-amber-400 animate-pulse'}`} />
+                                    {lat && lng
+                                        ? `${lang === 'hi' ? 'Location मिली:' : 'Location:'} ${lat.toFixed(4)}, ${lng.toFixed(4)}`
+                                        : (lang === 'hi' ? 'Location detect हो रही है...' : 'Detecting location...')}
+                                </div>
+
+                                {submitErr && (
+                                    <div className="bg-error-light border border-error/30 rounded-xl px-4 py-3 text-label-sm text-error-dark">
+                                        {submitErr}
+                                    </div>
+                                )}
+
+                                <div className="flex gap-3">
+                                    <Button type="button" variant="outline" size="lg" className="flex-1" onClick={() => setStep(2)}>← Back</Button>
+                                    <Button type="submit" variant="primary" size="lg" className="flex-1" loading={isSubmitting}>
+                                        {lang === 'hi' ? 'Product जोड़ें' : 'Add Product'}
                                     </Button>
                                 </div>
                             </>
                         )}
 
-                        {step === 3 && (
-                            <>
-                                <div className="text-body-sm text-muted">
-                                    Location: {coords ? `${coords.lat}, ${coords.lng}` : 'Detecting...'}
-                                </div>
-                                <div className="flex gap-3">
-                                    <Button type="button" variant="ghost" onClick={prevStep}>
-                                        Back
-                                    </Button>
-                                    <Button type="submit" variant="primary" loading={isSubmitting}>
-                                        Add Product
-                                    </Button>
-                                </div>
-                            </>
-                        )}
                     </form>
                 </Dialog.Content>
             </Dialog.Portal>

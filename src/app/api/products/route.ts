@@ -22,9 +22,13 @@ export async function GET(req: NextRequest) {
 // POST /api/products — seller only
 export async function POST(req: NextRequest) {
   try {
+    console.log("Call received - product");
     const user = requireRole(req, Role.SELLER);
+    console.log("Seller Authenticated", user);
     const body = AddProductSchema.parse(await req.json());
+    console.log("Body is ok", body);
     const product = await productService.create(user.userId, body);
+    console.log("Product created", product);
     return NextResponse.json({
       success: true,
       data: {product}

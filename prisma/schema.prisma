@@ -338,6 +338,7 @@ model Product {
   latitude  Float
   longitude Float
   city      String
+  location Unsupported("geography(Point, 4326)")?
 
   // Lifecycle
   productStatus ProductStatus @default(ACTIVE)

@@ -10,7 +10,7 @@ export async function POST(
   { params }: { params: Promise<{ id: string }> },
 ) {
   try {
-    const user = requireRole(req, Role.SELLER);
+    const user = await requireRole(req, Role.SELLER);
     const { id } = await params;
     const body = VerifyOtpSchema.parse(await req.json());
     const result = await paymentService.verifyOtp(id, user.userId, body.otp);

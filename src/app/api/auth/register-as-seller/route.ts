@@ -8,7 +8,7 @@ import { tokenService } from "@/services/token.service";
 
 export async function POST(req: NextRequest) {
   try {
-    const user = getUser(req);
+    const user = await getUser(req);
     const body = RegisterAsSellerSchema.parse(await req.json());
     const result = await authService.registerAsSeller(user.userId, body);
     const updatedUser = await authService.getUpdatedUser(user.userId);

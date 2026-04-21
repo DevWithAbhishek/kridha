@@ -8,7 +8,7 @@ type NotifParams = { params: Promise<{ id: string }> };
 
 export async function GET(req: NextRequest, { params }: NotifParams) {
   try {
-    const user = getUser(req);
+    const user = await getUser(req);
     const { id } = await params;
     const n = await prisma.notification.findUnique({ where: { id } });
     if (!n || n.deletedAt) throw ERR.NOTIFICATION_NOT_FOUND;
@@ -21,7 +21,7 @@ export async function GET(req: NextRequest, { params }: NotifParams) {
 
 export async function PATCH(req: NextRequest, { params }: NotifParams) {
   try {
-    const user = getUser(req);
+    const user = await getUser(req);
     const { id } = await params;
     const n = await prisma.notification.findUnique({ where: { id } });
     if (!n || n.deletedAt) throw ERR.NOTIFICATION_NOT_FOUND;
@@ -41,7 +41,7 @@ export async function PATCH(req: NextRequest, { params }: NotifParams) {
 
 export async function DELETE(req: NextRequest, { params }: NotifParams) {
   try {
-    const user = getUser(req);
+    const user = await getUser(req);
     const { id } = await params;
     const n = await prisma.notification.findUnique({ where: { id } });
     if (!n || n.deletedAt) throw ERR.NOTIFICATION_NOT_FOUND;

@@ -24,7 +24,7 @@ async function reAggregateSellerRating(sellerId: string): Promise<void> {
 
 export async function PATCH(req: NextRequest, { params }: ReviewParams) {
   try {
-    const user = getUser(req);
+    const user = await getUser(req);
     const { id } = await params;
     const body = UpdateReviewSchema.parse(await req.json());
 
@@ -60,7 +60,7 @@ export async function PATCH(req: NextRequest, { params }: ReviewParams) {
 
 export async function DELETE(req: NextRequest, { params }: ReviewParams) {
   try {
-    const user = getUser(req);
+    const user = await getUser(req);
     const { id } = await params;
 
     const review = await prisma.review.findUnique({ where: { id } });

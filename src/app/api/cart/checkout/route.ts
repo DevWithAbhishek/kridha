@@ -7,7 +7,7 @@ import { NextRequest, NextResponse } from "next/server";
 
 export async function POST(req: NextRequest) {
   try {
-    const user = getUser(req);
+    const user = await getUser(req);
 
     const cart = await prisma.cartSession.findFirst({
       where: { userId: user.userId, expiresAt: { gt: new Date() } },

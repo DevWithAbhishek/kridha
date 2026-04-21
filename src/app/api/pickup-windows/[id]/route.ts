@@ -2,6 +2,7 @@ import { prisma } from "@/lib/db";
 import { ERR } from "@/lib/errors";
 import { requireRole } from "@/lib/get-user";
 import { handleError } from "@/lib/handleError";
+import { hasTimeOverlap, toMinutes } from "@/lib/window-validator";
 import { EditPickupWindowSchema } from "@/schemas";
 import { Role } from "@prisma/client";
 import { NextRequest, NextResponse } from "next/server";
@@ -21,31 +22,70 @@ export async function PATCH(
   { params }: { params: Promise<{ id: string }> },
 ) {
   try {
-    const user = requireRole(req, Role.SELLER);
+    const user = await requireRole(req, Role.SELLER);
     const { id } = await params;
     const body = EditPickupWindowSchema.parse(await req.json());
 
-    const window = await prisma.pickupWindow.findFirst({
-      where: {
-        id,
-        sellerId: user.userId,
-        deletedAt: null,
-      },
-    });
-    if (!window) throw ERR.PICKUP_WINDOW_NOT_FOUND;
+    const updated = await prisma.$transaction(async (tx) => {
+      const existingWindow = await tx.pickupWindow.findFirst({
+        where: {
+          id,
+          sellerId: user.userId,
+          deletedAt: null,
+        },
+      });
 
-    const updated = await prisma.pickupWindow.update({
-      where: { id },
-      data: {
-        ...(body.labelEn !== undefined ? { labelEn: body.labelEn } : {}),
-        ...(body.labelHi !== undefined ? { labelHi: body.labelHi } : {}),
-        ...(body.startTime !== undefined ? { startTime: body.startTime } : {}),
-        ...(body.endTime !== undefined ? { endTime: body.endTime } : {}),
-        ...(body.daysActive !== undefined
-          ? { daysActive: body.daysActive.map((d) => DAY_MAP2[d]) }
-          : {}),
-      },
+      if (!existingWindow) throw ERR.PICKUP_WINDOW_NOT_FOUND;
+
+      const finalStart = body.startTime ?? existingWindow.startTime;
+      const finalEnd = body.endTime ?? existingWindow.endTime;
+      const finalDays = body.daysActive
+        ? body.daysActive.map((d) => DAY_MAP2[d])
+        : existingWindow.daysActive;
+
+      const newStart = toMinutes(finalStart);
+      const newEnd = toMinutes(finalEnd);
+
+      if (newStart >= newEnd) {
+        throw ERR.INVALID_TIME_RANGE;
+      }
+
+      const conflicts = await tx.pickupWindow.findMany({
+        where: {
+          sellerId: user.userId,
+          deletedAt: null,
+          id: { not: id }, //exclude self
+          daysActive: { hasSome: finalDays },
+        },
+        select: {
+          startTime: true,
+          endTime: true,
+        },
+      });
+
+      for (const w of conflicts) {
+        const s = toMinutes(w.startTime);
+        const e = toMinutes(w.endTime);
+
+        if (hasTimeOverlap(newStart, newEnd, s, e)) {
+          throw ERR.PICKUP_WINDOW_OVERLAP;
+        }
+      }
+
+      return tx.pickupWindow.update({
+        where: { id },
+        data: {
+          ...(body.labelEn !== undefined && { labelEn: body.labelEn }),
+          ...(body.labelHi !== undefined && { labelHi: body.labelHi }),
+          ...(body.startTime !== undefined && { startTime: body.startTime }),
+          ...(body.endTime !== undefined && { endTime: body.endTime }),
+          ...(body.daysActive !== undefined && {
+            daysActive: finalDays,
+          }),
+        },
+      });
     });
+
     return NextResponse.json({
       success: true,
       data: { pickupWindow: updated },
@@ -60,7 +100,7 @@ export async function DELETE(
   { params }: { params: Promise<{ id: string }> },
 ) {
   try {
-    const user = requireRole(req, Role.SELLER);
+    const user = await requireRole(req, Role.SELLER);
     const { id } = await params;
 
     const window = await prisma.pickupWindow.findFirst({

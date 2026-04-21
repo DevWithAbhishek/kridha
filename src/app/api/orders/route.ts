@@ -7,7 +7,7 @@ import { orderService } from "@/services/order.service";
 // GET /api/orders — BUYER sees placed, SELLER sees received (same endpoint)
 export async function GET(req: NextRequest) {
     try {
-        const user = getUser(req);
+        const user = await getUser(req);
         const q = GetOrdersSchema.parse(Object.fromEntries(req.nextUrl.searchParams));
         const result = await orderService.getSubOrders(user.userId, q);
         return NextResponse.json({ success: true, data: result.subOrders, meta: result.meta });
@@ -19,7 +19,7 @@ export async function GET(req: NextRequest) {
 // POST /api/orders — direct order (not via cart); buyer only
 export async function POST(req: NextRequest) {
     try {
-        const user = getUser(req);
+        const user = await getUser(req);
         const body = CreateOrderSchema.parse(await req.json());
         const items = body.items.map(i => ({
             productId: i.productId,

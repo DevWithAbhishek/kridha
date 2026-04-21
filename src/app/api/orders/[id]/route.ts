@@ -1,5 +1,5 @@
 import { ERR } from "@/lib/errors";
-import { getUser } from "@/lib/get-user";
+import { getUser} from "@/lib/get-user";
 import { handleError } from "@/lib/handleError";
 import { orderRepo } from "@/repo/order.repo";
 import { NextRequest, NextResponse } from "next/server";
@@ -10,16 +10,20 @@ export async function GET(
     {params} : {params: Promise<{id: string}>}
 ) {
     try {
-        const user = getUser(req);
+        const user = await getUser(req);
         const { id } = await params;
-        const sub = await orderRepo.findSubOrderById(id);
-        if (!sub) throw ERR.SUBORDER_NOT_FOUND;
+        const subOrder = await orderRepo.findSubOrderById(id);
+        if (!subOrder) throw ERR.SUBORDER_NOT_FOUND;
 
         // Ownership check: buyer OR seller OR admin (INV-05)
-        const roles = JSON.parse(req.headers.get('x-user-roles') ?? '[]') as string[];
-        if (sub.order.buyerId !== user.userId && sub.sellerId !== user.userId && !roles.includes('ADMIN')) throw ERR.FORBIDDEN;
+        if (
+          subOrder.order.buyerId !== user.userId &&
+          subOrder.sellerId !== user.userId &&
+          !user.roles.includes("ADMIN")
+        )
+          throw ERR.FORBIDDEN;
 
-        return NextResponse.json({ success: true, data: { subOrder: sub } });
+        return NextResponse.json({ success: true, data: subOrder });
     } catch (err) {
         return handleError(err);
     }

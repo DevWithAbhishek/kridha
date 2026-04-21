@@ -9,7 +9,7 @@ export async function POST(
   { params }: { params: Promise<{ id: string }> },
 ) {
   try {
-    const user = requireRole(req, Role.SELLER);
+    const user = await requireRole(req, Role.SELLER);
     const { id } = await params;
     const result = await paymentService.requestPaymentLink(id, user.userId);
     return NextResponse.json({ success: true, data: result });

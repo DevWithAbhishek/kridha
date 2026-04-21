@@ -6,7 +6,7 @@ import { prisma } from "@/lib/db";
 
 export async function GET(req: NextRequest) {
   try {
-    const user = getUser(req);
+    const user = await getUser(req);
     const q = GetNotificationsSchema.parse(
       Object.fromEntries(req.nextUrl.searchParams),
     );

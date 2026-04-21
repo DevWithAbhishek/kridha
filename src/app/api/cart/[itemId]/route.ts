@@ -9,7 +9,7 @@ export async function PATCH(
   { params }: { params: Promise<{ itemId: string }> },
 ) {
   try {
-    const user = getUser(req);
+    const user = await getUser(req);
     const { itemId } = await params;
     const body = UpdateCartItemSchema.parse(await req.json());
     const cartItem = await cartService.updateItem(user.userId, itemId, body);
@@ -28,7 +28,7 @@ export async function DELETE(
   { params }: { params: Promise<{ itemId: string }> },
 ) {
   try {
-    const user = getUser(req);
+    const user = await getUser(req);
     const { itemId } = await params;
     await cartService.removeItem(user.userId, itemId);
     return NextResponse.json({

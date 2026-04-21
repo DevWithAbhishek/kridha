@@ -17,7 +17,7 @@ function maskAccount(n: string | null | undefined): string | null {
 
 export async function GET(req: NextRequest) {
   try {
-    const user = requireRole(req, Role.SELLER);
+    const user = await requireRole(req, Role.SELLER);
     const profile = await sellerService.getSellerProfile(user.userId);
     if (!profile) throw ERR.NOT_FOUND("SellerProfile");
 
@@ -35,7 +35,7 @@ export async function GET(req: NextRequest) {
 
 export async function PATCH(req: NextRequest) {
   try {
-    const user = requireRole(req, Role.SELLER);
+    const user = await requireRole(req, Role.SELLER);
     const body = EditSellerProfileSchema.parse(await req.json());
     const profile = await sellerService.findSeller(user.userId);
     if (!profile) throw ERR.NOT_FOUND("SellerProfile");
@@ -49,6 +49,13 @@ export async function PATCH(req: NextRequest) {
         newStreet,
       );
       if (conflict) throw ERR.STORE_EXISTS;
+    }
+
+    if (body.businessType || body.gstNo || body.panNo || body.accountHolderName || body.accountNumber || body.bankName || body.ifscCode) {
+      const valid = await sellerService.checkValidChange(user.userId);
+      if (valid) {
+        const updated = await sellerService.updateSellerCriticalDetails(user.userId, body);
+      }
     }
 
     const updated = await sellerService.updateSellerProfile(user.userId, body);

@@ -15,10 +15,7 @@ cloudinary.config({
 
 export async function POST(req: NextRequest) {
   try {
-    console.log("Call received");
-    getUser(req); // must be logged in — no anonymous uploads
-
-    console.log("User authenticated");
+    await getUser(req); // must be logged in — no anonymous uploads
     const { folder = "products" } = await req.json().catch(() => ({}));
     const allowedFolders = ["products", "profiles", "stores"] as const;
     const safeFolder = (allowedFolders as readonly string[]).includes(folder)
@@ -35,8 +32,6 @@ export async function POST(req: NextRequest) {
       params,
       process.env.CLOUDINARY_API_SECRET!,
     );
-    console.log("Everything is ok");
-
     return NextResponse.json({
       success: true,
       data: {

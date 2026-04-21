@@ -15,7 +15,6 @@ export async function POST(req: NextRequest) {
     const { token, admin } = await adminService.login(body, ip);
     const res = NextResponse.json({ success: true, data: { admin } });
     setAdminCookie(res, token);
-    console.log("Admin Cookie: ", res.cookies.get("kridha_admin"));
     return res;
   } catch (err) {
     return handleError(err);

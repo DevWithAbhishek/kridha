@@ -52,7 +52,7 @@ export async function GET(req: NextRequest) {
 
 export async function POST(req: NextRequest) {
   try {
-    const user = getUser(req);
+    const user = await getUser(req);
     const body = AddReviewSchema.parse(await req.json());
 
     // INV-15: SubOrder must be COMPLETED, caller must be the buyer

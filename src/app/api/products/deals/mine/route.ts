@@ -9,10 +9,10 @@ import { NextRequest, NextResponse } from "next/server";
 // GET /api/products/deals/mine — seller's own deal history (active + expired)
 export async function GET(req: NextRequest) {
     try {
-        const user = requireRole(req, Role.SELLER);
+        const user = await requireRole(req, Role.SELLER);
         const q = GetSellerDealsSchema.parse(Object.fromEntries(req.nextUrl.searchParams));
         const deals = await dealService.listMine(user.userId, q);
-        return NextResponse.json({ success: true, data: { deals } });
+        return NextResponse.json({ success: true, data: deals });
     } catch (err) {
         return handleError(err);
     }

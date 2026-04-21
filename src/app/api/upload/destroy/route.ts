@@ -21,7 +21,7 @@ const DestroySchema = z.object({
 
 export async function DELETE(req: NextRequest) {
   try {
-    getUser(req); // auth required
+    await getUser(req); // auth required
 
     const { publicId } = DestroySchema.parse(await req.json());
 

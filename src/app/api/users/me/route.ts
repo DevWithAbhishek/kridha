@@ -12,7 +12,7 @@ import { userService } from "@/services/user.service";
 
 export async function GET(req: NextRequest) {
   try {
-    const userData = getUser(req);
+    const userData = await getUser(req);
     const user= await userService.getUserById(userData.userId);
     if (!user) throw ERR.NOT_FOUND("User");
     return NextResponse.json({ success: true, data: user });
@@ -23,7 +23,7 @@ export async function GET(req: NextRequest) {
 
 export async function PATCH(req: NextRequest) {
   try {
-    const userData = getUser(req);
+    const userData = await getUser(req);
     const body = EditUserProfileSchema.parse(await req.json());
     const user = await userService.updateUser(userData.userId, body);
     return NextResponse.json({ success: true, data: user });
@@ -34,7 +34,7 @@ export async function PATCH(req: NextRequest) {
 
 export async function DELETE(req: NextRequest) {
   try {
-    const user = getUser(req);
+    const user = await getUser(req);
     // Cannot delete if active orders exist
     const active = await userService.getActiveOrders(user.userId);
     if (active) throw ERR.ACCOUNT_HAS_ACTIVE_ORDERS;

@@ -7,7 +7,7 @@ import { ERR } from "@/lib/errors";
 
 export async function GET(req: NextRequest) {
   try {
-    const user = getUser(req);
+    const user = await getUser(req);
     const q = GetSavedProductsSchema.parse(
       Object.fromEntries(req.nextUrl.searchParams),
     );
@@ -63,7 +63,7 @@ export async function GET(req: NextRequest) {
 
 export async function POST(req: NextRequest) {
   try {
-    const user = getUser(req);
+    const user = await getUser(req);
     const body = AddToSavedProductsSchema.parse(await req.json());
 
     const product = await prisma.product.findUnique({

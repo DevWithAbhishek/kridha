@@ -6,7 +6,7 @@ import { NextRequest, NextResponse } from "next/server";
 
 export async function GET(req: NextRequest) {
   try {
-    const user = getUser(req);
+    const user = await getUser(req);
     const cart = await cartService.getOrCreate(user.userId);
     const summary = cartService.summarize(cart.cartItems);
     return NextResponse.json({
@@ -27,7 +27,7 @@ export async function GET(req: NextRequest) {
 
 export async function POST(req: NextRequest) {
   try {
-    const user = getUser(req);
+    const user = await getUser(req);
     const body = AddItemToCartSchema.parse(await req.json());
     const cartItem = await cartService.addItem(user.userId, body);
     return NextResponse.json(
@@ -47,7 +47,7 @@ export async function POST(req: NextRequest) {
 
 export async function DELETE(req: NextRequest) {
   try {
-    const user = getUser(req);
+    const user = await getUser(req);
     const result = await cartService.clearCart(user.userId);
     return NextResponse.json({
       success: true,

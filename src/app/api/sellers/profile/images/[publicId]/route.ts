@@ -22,7 +22,7 @@ type ImageParams = { params: Promise<{ publicId: string }> };
 
 export async function DELETE(req: NextRequest, { params }: ImageParams) {
   try {
-    const user = requireRole(req, Role.SELLER);
+    const user = await requireRole(req, Role.SELLER);
     const { publicId: encoded } = await params;
     const publicId = decodeURIComponent(encoded);
 
@@ -45,12 +45,12 @@ export async function DELETE(req: NextRequest, { params }: ImageParams) {
       if (!exists) return;
 
       const filtered = current.filter((img) => img.publicId !== publicId);
-      const parsed = AddStoreImagesSchema.parse(filtered);
+      AddStoreImagesSchema.parse(filtered);
 
       await tx.sellerProfile.update({
         where: { userId: user.userId },
         data: {
-          storeImages: parsed as Prisma.InputJsonValue,
+          storeImages: filtered as unknown as Prisma.InputJsonValue,
         },
       });
     });

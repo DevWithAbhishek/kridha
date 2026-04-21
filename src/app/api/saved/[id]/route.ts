@@ -10,7 +10,7 @@ export async function DELETE(
     {params} : {params: Promise<{id: string}>}
 ) {
     try {
-        const user = getUser(req);
+        const user = await getUser(req);
         const { id } = await params;
         const saved = await prisma.savedProduct.findUnique({ where: { id } });
         if (!saved) throw ERR.SAVED_PRODUCT_NOT_FOUND;

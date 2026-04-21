@@ -16,7 +16,7 @@ interface StoreImage {
 
 export async function GET(req: NextRequest) {
   try {
-    const user = requireRole(req, Role.SELLER);
+    const user = await requireRole(req, Role.SELLER);
     const profile = await sellerService.getSellerStoreImages(user.userId);
     if (!profile) throw ERR.NOT_FOUND("SellerProfile");
     return NextResponse.json({
@@ -30,8 +30,11 @@ export async function GET(req: NextRequest) {
 
 export async function POST(req: NextRequest) {
   try {
-    const user = requireRole(req, Role.SELLER);
-    const body = AddStoreImagesSchema.parse(await req.json());
+    const user = await requireRole(req, Role.SELLER);
+    const rawBody = await req.json();
+    const body = AddStoreImagesSchema.parse(rawBody);
+    console.log("rawBody: ", rawBody);
+    console.log("Body: ", body);
     
     const updated = await prisma.$transaction(async (tx) => {
       const profile = await tx.sellerProfile.findUnique({
@@ -52,11 +55,13 @@ export async function POST(req: NextRequest) {
       if (unique.length > MAX_STORE_IMAGES) {
         throw ERR.STORE_IMAGE_LIMIT;
       }
-      const parsed = AddStoreImagesSchema.parse(unique);
+      AddStoreImagesSchema.parse({
+        images: unique,
+      });
       return tx.sellerProfile.update({
         where: { userId: user.userId },
         data: {
-          storeImages: parsed as Prisma.InputJsonValue,
+          storeImages: unique as unknown as Prisma.InputJsonValue,
         },
         select: { storeImages: true },
       });

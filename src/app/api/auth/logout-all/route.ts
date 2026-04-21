@@ -6,7 +6,7 @@ import { clearAuthCookies } from "@/lib/cookies";
 
 export async function POST(req: NextRequest) {
   try {
-    const user = getUser(req);
+    const user = await getUser(req);
     await tokenService.revokeAll(user.userId);
     const res = NextResponse.json({
       success: true,

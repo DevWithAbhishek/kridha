@@ -13,7 +13,7 @@ export async function GET(
   try {
     const { id } = await params;
     const product = await productService.getById(id);
-    return NextResponse.json({ success: true, data: { product } });
+    return NextResponse.json({ success: true, data: product });
   } catch (err) {
     return handleError(err);
   }
@@ -25,7 +25,7 @@ export async function PATCH(
   { params }: { params: Promise<{ id: string }> },
 ) {
   try {
-    const user = requireRole(req, Role.SELLER);
+    const user = await requireRole(req, Role.SELLER);
     const { id } = await params;
     const body = UpdateProductSchema.parse(await req.json());
     const product = await productService.update(id, user.userId, body);
@@ -41,7 +41,7 @@ export async function DELETE(
   { params }: { params: Promise<{ id: string }> },
 ) {
   try {
-    const user = requireRole(req, Role.SELLER);
+    const user = await requireRole(req, Role.SELLER);
     const { id } = await params;
     await productService.softDelete(id, user.userId);
     return NextResponse.json({ success: true, message: "Product deleted." });

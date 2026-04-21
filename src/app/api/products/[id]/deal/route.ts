@@ -11,7 +11,7 @@ export async function POST(
   { params }: { params: Promise<{ id: string }> },
 ) {
   try {
-    const user = requireRole(req, Role.SELLER);
+    const user = await requireRole(req, Role.SELLER);
     const { id } = await params;
     const body = AddDealToProductSchema.parse(await req.json());
     const deal = await dealService.add(id, user.userId, body);
@@ -33,7 +33,7 @@ export async function PATCH(
   { params }: { params: Promise<{ id: string }> },
 ) {
   try {
-    const user = requireRole(req, Role.SELLER);
+    const user = await requireRole(req, Role.SELLER);
     const { id } = await params;
     const body = EditDealToProductSchema.parse(await req.json());
     const deal = await dealService.edit(id, user.userId, body);
@@ -49,7 +49,7 @@ export async function DELETE(
   { params }: { params: Promise<{ id: string }> },
 ) {
   try {
-    const user = requireRole(req, Role.SELLER);
+    const user = await requireRole(req, Role.SELLER);
     const { id } = await params;
     await dealService.remove(id, user.userId);
     return NextResponse.json({ success: true, message: "Deal removed." });

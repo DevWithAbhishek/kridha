@@ -14,6 +14,23 @@ import { ProductCategory, ProductUnit } from '@prisma/client';
 import { useLangStore } from '@/stores/langStore';
 import { useGeolocation } from '@/hooks/useGeolocation';
 import { api } from '@/lib/api';
+import { encode } from "blurhash";
+import { useTranslations } from 'next-intl';
+
+async function generateBlurHash(file: File) {
+    const img = await createImageBitmap(file);
+
+    const canvas = document.createElement("canvas");
+    canvas.width = 32;
+    canvas.height = 32;
+
+    const ctx = canvas.getContext("2d")!;
+    ctx.drawImage(img, 0, 0, 32, 32);
+
+    const imageData = ctx.getImageData(0, 0, 32, 32);
+
+    return encode(imageData.data, 32, 32, 4, 4);
+}
 
 const AddProductFormSchema = AddProductBaseSchema.omit({
     latitude: true,
@@ -22,8 +39,9 @@ const AddProductFormSchema = AddProductBaseSchema.omit({
 
 // Extracted from Cloudinary widget result
 interface UploadedImage {
-    url: string;  // secure_url
-    publicId: string;  // public_id — needed for deletion
+    url: string;
+    publicId: string;
+    blurHash: string;
 }
 
 type FormValues = z.input<typeof AddProductFormSchema>;
@@ -41,15 +59,14 @@ async function uploadToCloudinary(
     file: File,
     folder: string = "products",
 ): Promise<UploadedImage> {
-    // 1. Get signature from Kridha server
-    const { data: sigData } = await api.post<{
-        success: true;
-        data: { signature: string; timestamp: number; cloudName: string; apiKey: string; folder: string };
-    }>('/upload/sign', { folder });
+
+    // 🔥 generate blurhash FIRST
+    const blurHash = await generateBlurHash(file);
+
+    const { data: sigData } = await api.post('/upload/sign', { folder });
 
     const { signature, timestamp, cloudName, apiKey, folder: signedFolder } = sigData.data;
 
-    // 2. Upload directly to Cloudinary
     const form = new FormData();
     form.append('file', file);
     form.append('signature', signature);
@@ -64,8 +81,13 @@ async function uploadToCloudinary(
 
     if (!res.ok) throw new Error('Cloudinary upload failed');
 
-    const data = await res.json() as { secure_url: string; public_id: string };
-    return { url: data.secure_url, publicId: data.public_id };
+    const data = await res.json();
+
+    return {
+        url: data.secure_url,
+        publicId: data.public_id,
+        blurHash,
+    };
 }
 
 // ── Delete from Cloudinary via Kridha destroy route ─────────────────────────
@@ -92,6 +114,7 @@ function StepDots({ current, total }: { current: number; total: number }) {
 export function AddProductModal({ open, onClose, onSave }: Props) {
     const { lang } = useLangStore();
     const { lat, lng } = useGeolocation();
+    const t = useTranslations("addProductModal")
 
     const [images, setImages] = useState<UploadedImage[]>([]);
     const [uploading, setUploading] = useState(false);
@@ -138,7 +161,7 @@ export function AddProductModal({ open, onClose, onSave }: Props) {
 
         // Limit total images to 5
         if (images.length + files.length > 5) {
-            setUploadErr(lang === 'hi' ? 'अधिकतम 5 images allowed' : 'Maximum 5 images allowed');
+            setUploadErr(`${t("upload_error")}`);
             return;
         }
 
@@ -149,7 +172,7 @@ export function AddProductModal({ open, onClose, onSave }: Props) {
             const results = await Promise.all(files.map(f => uploadToCloudinary(f, 'products')));
             setImages(prev => [...prev, ...results]);
         } catch {
-            setUploadErr(lang === 'hi' ? 'Upload failed — retry करें' : 'Upload failed — please retry');
+            setUploadErr(`${t("upload_error")}`);
         } finally {
             setUploading(false);
             e.target.value = ''; // reset input so same file can be re-selected after error
@@ -167,28 +190,26 @@ export function AddProductModal({ open, onClose, onSave }: Props) {
     // ── Submit ────────────────────────────────────────────────────────────────
     async function onSubmit(values: FormValues) {
         setSubmitErr(null);
-        console.log("Product api called");
         try {
             if (!lat || !lng) {
-                setSubmitErr("Location not ready");
+                setSubmitErr(`${t("location_error")}`);
                 return;
             }
 
             const res = await api.post('/products', {
                 ...values,
                 imageUrls: images.map(i => i.url),
+                blurHash: images[0]?.blurHash,
                 latitude: lat,
                 longitude: lng,
             });
-            console.log("Res generated", res);
 
             if (res.status === 201) {
                 onSave();
                 handleClose();
             }
         } catch (err) {
-            console.log(err);
-            setSubmitErr(lang === 'hi' ? 'Product add नहीं हुआ — retry करें' : 'Failed to add product — please retry');
+            setSubmitErr(`${t("submit_error")}`);
         }
     }
 
@@ -203,7 +224,6 @@ export function AddProductModal({ open, onClose, onSave }: Props) {
 
     const CATEGORIES = Object.values(ProductCategory);
     const UNITS = Object.values(ProductUnit);
-    console.log(errors);
 
     return (
         <Dialog.Root open={open} onOpenChange={o => !o && handleClose()}>
@@ -214,7 +234,7 @@ export function AddProductModal({ open, onClose, onSave }: Props) {
                     {/* Header */}
                     <div className="flex items-center justify-between mb-6">
                         <Dialog.Title className="text-h5 font-bold">
-                            {lang === 'hi' ? 'Product जोड़ें' : 'Add Product'}
+                            {t("title")}
                         </Dialog.Title>
                         <button onClick={handleClose} aria-label="Close"><X className="w-5 h-5" /></button>
                     </div>
@@ -228,25 +248,25 @@ export function AddProductModal({ open, onClose, onSave }: Props) {
                             <>
                                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                                     <Input
-                                        label="Name (English) *"
+                                        label={`${t("name_en")}*`}
                                         {...register('nameEn')}
                                         error={errors.nameEn?.message}
                                     />
                                     <Input
-                                        label="Name (Hindi) *"
+                                        label={`${t("name_hi")}*`}
                                         {...register('nameHi')}
                                         error={errors.nameHi?.message}
                                     />
                                 </div>
 
                                 <Input
-                                    label="Description"
+                                    label={`${t("description")}`}
                                     {...register('description')}
                                 />
 
                                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                                     <div>
-                                        <label className="text-label-md font-medium block mb-1">Category *</label>
+                                        <label className="text-label-md font-medium block mb-1">{t("category")} *</label>
                                         <select
                                             {...register('category')}
                                             className="w-full border border-border-DEFAULT dark:border-border-dark rounded-lg px-3 py-2.5 bg-[var(--color-surface)] text-[var(--color-text)] text-body-sm outline-none focus:border-kridha-primary"
@@ -257,7 +277,7 @@ export function AddProductModal({ open, onClose, onSave }: Props) {
                                     </div>
 
                                     <div>
-                                        <label className="text-label-md font-medium block mb-1">Unit *</label>
+                                        <label className="text-label-md font-medium block mb-1">{t("unit")} *</label>
                                         <select
                                             {...register('unit')}
                                             className="w-full border border-border-DEFAULT dark:border-border-dark rounded-lg px-3 py-2.5 bg-[var(--color-surface)] text-[var(--color-text)] text-body-sm outline-none focus:border-kridha-primary"
@@ -269,7 +289,7 @@ export function AddProductModal({ open, onClose, onSave }: Props) {
                                 </div>
 
                                 <Input
-                                    label="Unit Increment *"
+                                    label={`${t("unit_increment")} *`}
                                     type="number"
                                     {...register('unitIncrement', { valueAsNumber: true })}
                                     error={errors.unitIncrement?.message}
@@ -277,11 +297,11 @@ export function AddProductModal({ open, onClose, onSave }: Props) {
 
                                 <label className="flex items-center gap-2 cursor-pointer select-none">
                                     <input type="checkbox" {...register('isBranded')} className="w-4 h-4 rounded" />
-                                    <span className="text-body-sm">Branded Product</span>
+                                    <span className="text-body-sm">{t("branded")}</span>
                                 </label>
 
                                 <Button type="button" variant="primary" size="lg" className="w-full" onClick={goNext}>
-                                    {lang === 'hi' ? 'आगे →' : 'Next →'}
+                                    {t("next")}
                                 </Button>
                             </>
                         )}
@@ -291,19 +311,19 @@ export function AddProductModal({ open, onClose, onSave }: Props) {
                             <>
                                 <div className="grid grid-cols-3 gap-3">
                                     <Input
-                                        label="Available *"
+                                        label={`${t("available")} *`}
                                         type="number"
                                         {...register('available', { valueAsNumber: true })}
                                         error={errors.available?.message}
                                     />
                                     <Input
-                                        label="Min Qty *"
+                                        label={`${t("min_qty")} *`}
                                         type="number"
                                         {...register('minOrderQuantity', { valueAsNumber: true })}
                                         error={errors.minOrderQuantity?.message}
                                     />
                                     <Input
-                                        label="Max Qty"
+                                        label={`${t("max_qty")} *`}
                                         type="number"
                                         {...register('maxOrderQuantity', { valueAsNumber: true })}
                                         error={errors.maxOrderQuantity?.message}
@@ -312,21 +332,21 @@ export function AddProductModal({ open, onClose, onSave }: Props) {
 
                                 {/* Price tiers */}
                                 <div>
-                                    <p className="text-label-md font-semibold mb-2">Price Tiers *</p>
+                                    <p className="text-label-md font-semibold mb-2">{t("price_tiers")} *</p>
                                     <div className="space-y-2">
                                         {fields.map((field, i) => (
                                             <div key={field.id} className="grid grid-cols-[1fr_1fr_auto] gap-2 items-end">
                                                 <Input
-                                                    label={i === 0 ? 'Min Qty' : ''}
+                                                    label={i === 0 ? `${t("min_qty")} *` : ''}
                                                     type="number"
                                                     placeholder="Min qty"
                                                     {...register(`priceTiers.${i}.minQty`, { valueAsNumber: true })}
                                                     error={errors.priceTiers?.[i]?.minQty?.message}
                                                 />
                                                 <Input
-                                                    label={i === 0 ? 'Price / Unit (₹)' : ''}
+                                                    label={i === 0 ? `${t("price_per_unit")} *` : ''}
                                                     type="number"
-                                                    placeholder="₹ per unit"
+                                                    placeholder={`${t("price_per_unit")}`}
                                                     {...register(`priceTiers.${i}.pricePerUnit`, { valueAsNumber: true })}
                                                     error={errors.priceTiers?.[i]?.pricePerUnit?.message}
                                                 />
@@ -335,7 +355,7 @@ export function AddProductModal({ open, onClose, onSave }: Props) {
                                                         type="button"
                                                         onClick={() => remove(i)}
                                                         className="mb-0.5 p-2 text-error hover:bg-error-light rounded-lg"
-                                                        aria-label="Remove tier"
+                                                        aria-label={`${t("remove_tier")}`}
                                                     >
                                                         <Trash2 className="w-4 h-4" />
                                                     </button>
@@ -350,13 +370,13 @@ export function AddProductModal({ open, onClose, onSave }: Props) {
                                         className="mt-2"
                                         onClick={() => append({ minQty: 1, pricePerUnit: 0 })}
                                     >
-                                        + Add Tier
+                                        {t("add_tier")}
                                     </Button>
                                 </div>
 
                                 <div className="flex gap-3">
-                                    <Button type="button" variant="outline" size="lg" className="flex-1" onClick={() => setStep(1)}>← Back</Button>
-                                    <Button type="button" variant="primary" size="lg" className="flex-1" onClick={goNext}>{lang === 'hi' ? 'आगे →' : 'Next →'}</Button>
+                                    <Button type="button" variant="outline" size="lg" className="flex-1" onClick={() => setStep(1)}>{t("back")}</Button>
+                                    <Button type="button" variant="primary" size="lg" className="flex-1" onClick={goNext}>{t("next") }</Button>
                                 </div>
                             </>
                         )}
@@ -367,7 +387,7 @@ export function AddProductModal({ open, onClose, onSave }: Props) {
                                 {/* Image upload area */}
                                 <div>
                                     <p className="text-label-md font-semibold mb-2">
-                                        {lang === 'hi' ? 'Product Images (अधिकतम 5)' : 'Product Images (max 5)'}
+                                        {t("images")}
                                     </p>
 
                                     {/* Uploaded image previews */}
@@ -385,7 +405,7 @@ export function AddProductModal({ open, onClose, onSave }: Props) {
                                                         type="button"
                                                         onClick={() => removeImage(i)}
                                                         className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 flex items-center justify-center transition-opacity"
-                                                        aria-label="Remove image"
+                                                        aria-label={`${t("choose_images")}`}
                                                     >
                                                         <Trash2 className="w-4 h-4 text-white" />
                                                     </button>
@@ -410,8 +430,8 @@ export function AddProductModal({ open, onClose, onSave }: Props) {
                                                     : 'border-border-DEFAULT dark:border-border-dark hover:border-kridha-primary text-muted-DEFAULT'
                                                 }`}>
                                                 {uploading
-                                                    ? <><Loader2 className="w-4 h-4 animate-spin" />{lang === 'hi' ? 'Upload हो रहा है...' : 'Uploading...'}</>
-                                                    : <><Upload className="w-4 h-4" />{lang === 'hi' ? 'Images चुनें' : 'Choose images'}</>
+                                                    ? <><Loader2 className="w-4 h-4 animate-spin" />{t("uploading")}</>
+                                                    : <><Upload className="w-4 h-4" />{t("choose_images")}</>
                                                 }
                                             </div>
                                         </label>
@@ -426,8 +446,8 @@ export function AddProductModal({ open, onClose, onSave }: Props) {
                                 <div className="text-label-sm text-muted-DEFAULT dark:text-muted-dark flex items-center gap-1.5">
                                     <span className={`w-2 h-2 rounded-full inline-block ${lat && lng ? 'bg-success-dark' : 'bg-amber-400 animate-pulse'}`} />
                                     {lat && lng
-                                        ? `${lang === 'hi' ? 'Location मिली:' : 'Location:'} ${lat.toFixed(4)}, ${lng.toFixed(4)}`
-                                        : (lang === 'hi' ? 'Location detect हो रही है...' : 'Detecting location...')}
+                                        ? `${t("location_found")} ${lat.toFixed(4)}, ${lng.toFixed(4)}`
+                                        : `${t("location_detecting")}`}
                                 </div>
 
                                 {submitErr && (
@@ -437,9 +457,9 @@ export function AddProductModal({ open, onClose, onSave }: Props) {
                                 )}
 
                                 <div className="flex gap-3">
-                                    <Button type="button" variant="outline" size="lg" className="flex-1" onClick={() => setStep(2)}>← Back</Button>
+                                    <Button type="button" variant="outline" size="lg" className="flex-1" onClick={() => setStep(2)}>{t("back") }</Button>
                                     <Button type="submit" variant="primary" size="lg" className="flex-1" loading={isSubmitting}>
-                                        {lang === 'hi' ? 'Product जोड़ें' : 'Add Product'}
+                                        {t("submit")}
                                     </Button>
                                 </div>
                             </>

@@ -60,8 +60,7 @@ export default function EditSellerProfileModal({
 
             onSave();
             onClose();
-        } catch (err) {
-            console.error(err);
+        } catch {
             setError("Network error. Try again.");
         } finally {
             setLoading(false);

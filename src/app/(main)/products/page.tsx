@@ -1,458 +1,385 @@
 'use client';
 
-import { useMemo, useRef, useState, useEffect } from 'react';
-import { useRouter, useSearchParams } from 'next/navigation';
-import Image from 'next/image';
-import { MapPin, Filter, Search } from 'lucide-react';
-import { useVirtualizer } from '@tanstack/react-virtual';
-import { useFetch } from '@/hooks/useFetch';
-import { Button } from '@/components/ui/Button';
-import { Input } from '@/components/ui/Input';
-import { SkeletonCard } from '@/components/ui/Skeleton';
+// Buyer product feed — search, filter by category/price/brand/deal,
+// sort by distance/price, infinite scroll with "Load more" fallback,
+// low-connectivity safe (staleTime + gcTime), TanStack Virtual ready.
 
-type Product = {
-    id: string;
-    nameHi: string;
-    nameEn: string;
-    seller: { storeName: string };
-    imageUrl?: string;
-    minPrice: number;
-    distance: number;
-    unitIncrement: number;
-    unit: string;
-    dealActive?: boolean;
-    dealExpiresAt?: string;
+import { useState, useCallback, useRef, useEffect, useMemo } from 'react';
+import Image from 'next/image';
+import Link from 'next/link';
+import { useInfiniteQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import {
+    Search, SlidersHorizontal, MapPin, Star, X, ChevronDown,
+    Package2, Heart, Tag, Wifi, WifiOff, Filter, ArrowUpDown,
+} from 'lucide-react';
+import { api } from '@/lib/api';
+import { useLangStore } from '@/stores/langStore';
+import { useGeolocation, LUCKNOW_FALLBACK } from '@/hooks/useGeolocation';
+
+// ── Types ─────────────────────────────────────────────────────────────────
+interface PriceTier { minQty: number; maxQty: number | null; pricePerUnit: number; }
+interface Product {
+    id: string; nameEn: string; nameHi: string | null; description: string | null;
+    category: string; isBranded: boolean; unit: string; unitIncrement: number;
+    minOrderQuantity: number; available: number; imageUrls: string[]; blurHash: string | null;
+    city: string; distance_km: number; min_price: number | null;
+    dealDiscountPercent: number | null; dealExpiresAt: string | null;
+    priceTiers: PriceTier[];
+    seller?: { id: string; storeName: string; reliabilityScore: number; sellerRating: number; };
+}
+interface Page { products: Product[]; meta: { page: number; limit: number; total: number; hasMore: boolean }; }
+
+// ── Constants ─────────────────────────────────────────────────────────────
+const CATEGORIES = [
+    { v: 'GRAINS', en: 'Grains', hi: 'अनाज' }, { v: 'DAIRY', en: 'Dairy', hi: 'डेयरी' },
+    { v: 'OIL', en: 'Oil', hi: 'तेल' }, { v: 'SPICES', en: 'Spices', hi: 'मसाले' },
+    { v: 'VEGETABLES', en: 'Vegetables', hi: 'सब्जियां' }, { v: 'FRUITS', en: 'Fruits', hi: 'फल' },
+    { v: 'PULSES', en: 'Pulses', hi: 'दालें' }, { v: 'FLOUR', en: 'Flour', hi: 'आटा' },
+    { v: 'BEVERAGES', en: 'Beverages', hi: 'पेय' }, { v: 'OTHER', en: 'Other', hi: 'अन्य' },
+];
+const SORT_OPTIONS = [
+    { v: 'distance', en: 'Nearest first', hi: 'नज़दीक पहले' },
+    { v: 'price_asc', en: 'Price: Low → High', hi: 'कम कीमत पहले' },
+    { v: 'price_desc', en: 'Price: High → Low', hi: 'ज्यादा कीमत पहले' },
+];
+const CAT_EMOJI: Record<string, string> = {
+    GRAINS: '🌾', DAIRY: '🥛', OIL: '🫙', SPICES: '🌶️', VEGETABLES: '🥬',
+    FRUITS: '🍎', PULSES: '🫘', FLOUR: '🌾', BEVERAGES: '🍵', OTHER: '📦',
 };
 
-const DUMMY_PRODUCTS: Product[] = [
-    {
-        id: '1',
-        nameHi: 'गेहूं का आटा',
-        nameEn: 'Wheat Flour',
-        seller: { storeName: 'Ramesh Kirana' },
-        imageUrl: '/images/placeholder.svg',
-        minPrice: 45,
-        distance: 2.2,
-        unitIncrement: 1,
-        unit: 'kg',
-        dealActive: true,
-        dealExpiresAt: new Date(Date.now() + 1000 * 60 * 60).toISOString(),
-    },
-    {
-        id: '2',
-        nameHi: 'सरसों का तेल',
-        nameEn: 'Mustard Oil',
-        seller: { storeName: 'Suresh Mill' },
-        imageUrl: '/images/placeholder.svg',
-        minPrice: 180,
-        distance: 1.8,
-        unitIncrement: 1,
-        unit: 'ltr',
-    },
-    {
-        id: '3',
-        nameHi: 'चना',
-        nameEn: 'Chickpeas',
-        seller: { storeName: 'Mohan Store' },
-        imageUrl: '/images/placeholder.svg',
-        minPrice: 72,
-        distance: 3.1,
-        unitIncrement: 1,
-        unit: 'kg',
-    },
-];
-
-function useGeolocation() {
-    const [coords, setCoords] = useState<{ lat: number; lng: number } | null>(null);
-
-    useEffect(() => {
-        if (!navigator.geolocation) return;
-        navigator.geolocation.getCurrentPosition(
-            (position) => {
-                setCoords({
-                    lat: position.coords.latitude,
-                    lng: position.coords.longitude,
-                });
-            },
-            () => undefined,
-            { maximumAge: 1000 * 60 * 5, timeout: 10000 }
-        );
-    }, []);
-
-    return { coords };
+// ── Price tier helper ─────────────────────────────────────────────────────
+function getMinPrice(tiers: PriceTier[]): number {
+    if (!tiers.length) return 0;
+    return Math.min(...tiers.map(t => t.pricePerUnit));
 }
 
-function buildQuery(params: Record<string, string | undefined>) {
-    const filtered: Record<string, string> = {};
-    for (const [key, value] of Object.entries(params)) {
-        if (value !== undefined && value !== '') {
-            filtered[key] = value;
-        }
-    }   
-    return new URLSearchParams(filtered).toString();
-}
-
-
+// ── Product card ──────────────────────────────────────────────────────────
 function ProductCard({ product }: { product: Product }) {
-    const [qty, setQty] = useState(1);
+    const { lang } = useLangStore();
+    const minPrice = product.min_price ?? getMinPrice(product.priceTiers);
+    const hasDiscount = !!product.dealDiscountPercent;
+    const discountedPrice = hasDiscount ? Math.round(minPrice * (1 - product.dealDiscountPercent! / 100)) : null;
+    const name = lang === 'hi' ? (product.nameHi ?? product.nameEn) : product.nameEn;
+    const stars = product.seller?.sellerRating ?? 0;
 
     return (
-        <div className="min-w-[280px] bg-[var(--color-surface)] dark:bg-surface-dark rounded-card shadow-card border border-[var(--color-border)] p-5 snap-start">
-            <div className="relative mb-4">
-                {product.dealActive && (
-                    <span className="absolute top-2 right-2 bg-kridha-accent text-gray-900 text-label-sm font-bold px-2 py-1 rounded-pill">
-                        DEAL
-                    </span>
-                )}
-                <div className="aspect-product rounded-lg bg-kridha-secondary dark:bg-gray-700 flex items-center justify-center overflow-hidden">
-                    <Image
-                        src={product.imageUrl ?? '/images/placeholder.svg'}
-                        alt={product.nameHi}
-                        width={320}
-                        height={240}
-                        className="object-cover"
-                    />
-                </div>
-            </div>
-
-            <div className="mb-2">
-                <div className="text-h6 font-semibold">{product.nameHi}</div>
-                <div className="text-label-sm text-[var(--color-text-muted)]">{product.seller.storeName}</div>
-            </div>
-
-            <div className="flex items-center justify-between mb-3">
-                <div>
-                    <div className="text-h5 font-bold text-kridha-primary">₹{product.minPrice}</div>
-                    <div className="text-label-sm text-muted line-through">₹{Math.ceil(product.minPrice * 1.1)}</div>
-                </div>
-                <span className="bg-kridha-secondary text-kridha-primary text-label-sm rounded-pill px-2">
-                    {product.distance} km
-                </span>
-            </div>
-
-            <div className="flex items-center gap-2 mb-4">
-                <button
-                    type="button"
-                    onClick={() => setQty((prev) => Math.max(1, prev - product.unitIncrement))}
-                    className="w-9 h-9 rounded-btn border border-[var(--color-border)]"
-                >
-                    -
-                </button>
-                <span className="text-body-sm">{qty}</span>
-                <button
-                    type="button"
-                    onClick={() => setQty((prev) => prev + product.unitIncrement)}
-                    className="w-9 h-9 rounded-btn border border-[var(--color-border)]"
-                >
-                    +
-                </button>
-            </div>
-
-            <Button variant="primary" size="sm" className="w-full">
-                Add to cart
-            </Button>
-        </div>
-    );
-}
-
-function EmptyState() {
-    return (
-        <div className="rounded-card border border-dashed border-kridha-primary/30 bg-kridha-secondary/30 p-10 text-center">
-            <div className="text-kridha-primary text-3xl mb-4">🛒</div>
-            <p className="text-h6 font-semibold mb-2">कोई उत्पाद नहीं मिला</p>
-            <p className="text-body-sm text-[var(--color-text-muted)]">अपने खोज शब्द या फ़िल्टर बदलें</p>
-        </div>
-    );
-}
-
-export default function ProductsPage() {
-    const router = useRouter();
-    const searchParams = useSearchParams();
-    const [search, setSearch] = useState(searchParams.get('q') ?? '');
-    const [radius, setRadius] = useState(searchParams.get('radius') ?? '10');
-    const [category, setCategory] = useState(searchParams.get('category') ?? '');
-    const [sortBy, setSortBy] = useState(searchParams.get('sortBy') ?? 'distance');
-    const [minPrice, setMinPrice] = useState(searchParams.get('minPrice') ?? '');
-    const [maxPrice, setMaxPrice] = useState(searchParams.get('maxPrice') ?? '');
-    const [dealOnly, setDealOnly] = useState(searchParams.get('dealActive') === 'true');
-    const [mobileFiltersOpen, setMobileFiltersOpen] = useState(false);
-
-    const { coords } = useGeolocation();
-
-    useEffect(() => {
-        const timer = setTimeout(() => {
-            const params = {
-                q: search,
-                radius,
-                category,
-                sortBy,
-                minPrice,
-                maxPrice,
-                dealActive: dealOnly ? 'true' : '',
-                lat: coords ? String(coords.lat) : undefined,
-                lng: coords ? String(coords.lng) : undefined,
-            };
-            const queryString = buildQuery(params);
-            router.replace(`/products?${queryString}`, { scroll: false });
-        }, 300);
-
-        return () => clearTimeout(timer);
-    }, [search, radius, category, sortBy, minPrice, maxPrice, dealOnly, coords, router]);
-
-    const queryString = useMemo(() => {
-        const params = {
-            q: search,
-            radius,
-            category,
-            sortBy,
-            minPrice,
-            maxPrice,
-            dealActive: dealOnly ? 'true' : '',
-            lat: coords ? String(coords.lat) : undefined,
-            lng: coords ? String(coords.lng) : undefined,
-        };
-        return buildQuery(params);
-    }, [search, radius, category, sortBy, minPrice, maxPrice, dealOnly, coords]);
-
-    const { data: products = DUMMY_PRODUCTS, loading } = useFetch<Product[]>(
-        `/api/products?${queryString}`,
-        DUMMY_PRODUCTS
-    );
-
-    const parentRef = useRef<HTMLDivElement | null>(null);
-    const rowVirtualizer = useVirtualizer({
-        count: products.length,
-        getScrollElement: () => parentRef.current,
-        estimateSize: () => 260,
-        overscan: 3,
-    });
-
-    const filterPills = [
-        { value: '5', label: '5 km' },
-        { value: '10', label: '10 km' },
-        { value: '20', label: '20 km' },
-        { value: '50', label: '50 km' },
-    ];
-
-    const categories = [
-        { value: 'GRAINS', label: 'अनाज' },
-        { value: 'OIL', label: 'तेल' },
-        { value: 'SPICES', label: 'मसाले' },
-        { value: 'FLOUR', label: 'आटा' },
-        { value: 'DAIRY', label: 'डेयरी' },
-        { value: 'OTHER', label: 'अन्य' },
-    ];
-
-    return (
-        <div className="bg-[var(--color-bg)] min-h-screen">
-            <div className="max-w-page mx-auto px-page-x md:px-page-x-md py-8">
-                <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between mb-8">
-                    <div className="relative flex-1">
-                        <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-[var(--color-text-muted)]" />
-                        <Input
-                            className="pl-11"
-                            placeholder="Search products"
-                            value={search}
-                            onChange={(event) => setSearch(event.target.value)}
+        <Link href={`/products/${product.id}`} className="group block h-full">
+            <div className="bg-[var(--color-surface)] dark:bg-surface-dark border border-border-DEFAULT dark:border-border-dark rounded-2xl overflow-hidden hover:shadow-lg hover:border-kridha-primary/40 transition-all duration-200 h-full flex flex-col">
+                {/* Image */}
+                <div className="relative w-full aspect-[4/3] bg-gray-100 dark:bg-gray-800 overflow-hidden flex-shrink-0">
+                    {product.imageUrls?.[0] ? (
+                        <Image
+                            src={product.imageUrls[0]}
+                            alt={name}
+                            fill
+                            sizes="(max-width:640px) 50vw,(max-width:1024px) 33vw,25vw"
+                            className="object-cover group-hover:scale-105 transition-transform duration-300"
                         />
-                    </div>
-                    <button
-                        type="button"
-                        onClick={() => setMobileFiltersOpen((prev) => !prev)}
-                        className="inline-flex items-center gap-2 rounded-pill border border-[var(--color-border)] bg-[var(--color-surface)] px-4 py-2 text-label-sm"
-                    >
-                        <Filter className="w-4 h-4" />
-                        Filters
-                    </button>
-                </div>
-
-                <div className="hidden lg:grid lg:grid-cols-[280px_1fr] gap-6">
-                    <aside className="space-y-6">
-                        <div className="bg-[var(--color-surface)] rounded-card border border-[var(--color-border)] p-5 space-y-5">
-                            <div>
-                                <h2 className="text-h6 font-semibold mb-3">Radius</h2>
-                                <div className="flex flex-wrap gap-2">
-                                    {filterPills.map((item) => (
-                                        <button
-                                            key={item.value}
-                                            type="button"
-                                            onClick={() => setRadius(item.value)}
-                                            className={`rounded-pill px-3 py-2 text-label-sm transition ${radius === item.value
-                                                ? 'bg-kridha-primary text-white'
-                                                : 'bg-background-subtle text-[var(--color-text-muted)]'
-                                                }`}
-                                        >
-                                            {item.label}
-                                        </button>
-                                    ))}
-                                </div>
-                            </div>
-
-                            <div>
-                                <h2 className="text-h6 font-semibold mb-3">Category</h2>
-                                <div className="grid grid-cols-2 gap-2">
-                                    {categories.map((categoryItem) => (
-                                        <button
-                                            key={categoryItem.value}
-                                            type="button"
-                                            onClick={() => setCategory(categoryItem.value)}
-                                            className={`rounded-pill px-3 py-2 text-label-sm transition ${category === categoryItem.value
-                                                ? 'bg-kridha-primary text-white'
-                                                : 'bg-background-subtle text-[var(--color-text-muted)]'
-                                                }`}
-                                        >
-                                            {categoryItem.label}
-                                        </button>
-                                    ))}
-                                </div>
-                            </div>
-
-                            <div>
-                                <h2 className="text-h6 font-semibold mb-3">Price</h2>
-                                <div className="grid gap-3">
-                                    <Input
-                                        label="Min"
-                                        type="number"
-                                        value={minPrice}
-                                        onChange={(event) => setMinPrice(event.target.value)}
-                                    />
-                                    <Input
-                                        label="Max"
-                                        type="number"
-                                        value={maxPrice}
-                                        onChange={(event) => setMaxPrice(event.target.value)}
-                                    />
-                                </div>
-                            </div>
-
-                            <div className="flex items-center justify-between">
-                                <span className="text-label-sm text-[var(--color-text-muted)]">Deal only</span>
-                                <button
-                                    type="button"
-                                    onClick={() => setDealOnly((prev) => !prev)}
-                                    className={`h-8 w-14 rounded-full transition ${dealOnly ? 'bg-kridha-primary' : 'bg-background-subtle'}`}
-                                >
-                                    <span
-                                        className={`block h-7 w-7 rounded-full bg-white transition-transform ${dealOnly ? 'translate-x-6' : 'translate-x-1'}`}
-                                    />
-                                </button>
-                            </div>
+                    ) : (
+                        <div className="absolute inset-0 flex items-center justify-center text-4xl">{CAT_EMOJI[product.category] ?? '📦'}</div>
+                    )}
+                    {/* Deal badge */}
+                    {hasDiscount && (
+                        <div className="absolute top-2 left-2 flex items-center gap-1 bg-red-500 text-white text-[11px] font-bold px-2 py-1 rounded-lg shadow">
+                            <Tag className="w-2.5 h-2.5" />{product.dealDiscountPercent}% OFF
                         </div>
-                    </aside>
-
-                    <section>
-                        {loading ? (
-                            <div className="grid gap-6">
-                                <SkeletonCard />
-                                <SkeletonCard />
-                                <SkeletonCard />
-                            </div>
-                        ) : products.length === 0 ? (
-                            <EmptyState />
-                        ) : (
-                            <div className="grid lg:grid-cols-2 xl:grid-cols-3 gap-6">
-                                {products.map((product) => (
-                                    <ProductCard key={product.id} product={product} />
-                                ))}
-                            </div>
-                        )}
-                    </section>
+                    )}
+                    {/* Out of stock */}
+                    {product.available === 0 && (
+                        <div className="absolute inset-0 bg-black/50 flex items-center justify-center">
+                            <span className="bg-white/90 text-gray-800 text-label-xs font-bold px-3 py-1 rounded-full">Out of Stock</span>
+                        </div>
+                    )}
+                    {/* Image count */}
+                    {product.imageUrls?.length > 1 && (
+                        <div className="absolute bottom-2 right-2 bg-black/60 text-white text-[10px] px-1.5 py-0.5 rounded font-medium">+{product.imageUrls.length - 1}</div>
+                    )}
                 </div>
 
-                <div className="lg:hidden">
-                    {mobileFiltersOpen && (
-                        <div className="fixed inset-x-0 bottom-0 z-50 bg-[var(--color-surface)] rounded-t-3xl border border-[var(--color-border)] p-5 animate-slide-in-up shadow-2xl">
-                            <div className="grid gap-5">
-                                <div>
-                                    <h2 className="text-h6 font-semibold mb-3">Radius</h2>
-                                    <div className="flex flex-wrap gap-2">
-                                        {filterPills.map((item) => (
-                                            <button
-                                                key={item.value}
-                                                type="button"
-                                                onClick={() => setRadius(item.value)}
-                                                className={`rounded-pill px-3 py-2 text-label-sm transition ${radius === item.value
-                                                    ? 'bg-kridha-primary text-white'
-                                                    : 'bg-background-subtle text-[var(--color-text-muted)]'
-                                                    }`}
-                                            >
-                                                {item.label}
-                                            </button>
-                                        ))}
-                                    </div>
-                                </div>
+                {/* Content */}
+                <div className="flex flex-col flex-1 p-3">
+                    <p className="text-label-sm text-muted-DEFAULT dark:text-muted-dark mb-0.5 capitalize">{product.category.toLowerCase()}{product.isBranded ? ' · Branded' : ''}</p>
+                    <h3 className="font-semibold text-label-md text-[var(--color-text)] line-clamp-2 leading-snug mb-1">{name}</h3>
 
-                                <div>
-                                    <h2 className="text-h6 font-semibold mb-3">Category</h2>
-                                    <div className="grid grid-cols-2 gap-2">
-                                        {categories.map((categoryItem) => (
-                                            <button
-                                                key={categoryItem.value}
-                                                type="button"
-                                                onClick={() => setCategory(categoryItem.value)}
-                                                className={`rounded-pill px-3 py-2 text-label-sm transition ${category === categoryItem.value
-                                                    ? 'bg-kridha-primary text-white'
-                                                    : 'bg-background-subtle text-[var(--color-text-muted)]'
-                                                    }`}
-                                            >
-                                                {categoryItem.label}
-                                            </button>
-                                        ))}
-                                    </div>
-                                </div>
+                    {/* Price */}
+                    <div className="flex items-baseline gap-1.5 mt-auto pt-2">
+                        <span className="text-label-lg font-bold text-kridha-primary">₹{(discountedPrice ?? minPrice).toLocaleString('en-IN')}</span>
+                        {hasDiscount && <span className="text-label-xs text-muted-DEFAULT dark:text-muted-dark line-through">₹{minPrice.toLocaleString('en-IN')}</span>}
+                        <span className="text-label-xs text-muted-DEFAULT dark:text-muted-dark">/{product.unit.toLowerCase()}</span>
+                    </div>
 
-                                <div>
-                                    <h2 className="text-h6 font-semibold mb-3">Price</h2>
-                                    <div className="grid gap-3">
-                                        <Input
-                                            label="Min"
-                                            type="number"
-                                            value={minPrice}
-                                            onChange={(event) => setMinPrice(event.target.value)}
-                                        />
-                                        <Input
-                                            label="Max"
-                                            type="number"
-                                            value={maxPrice}
-                                            onChange={(event) => setMaxPrice(event.target.value)}
-                                        />
-                                    </div>
-                                </div>
+                    {/* Seller + distance */}
+                    <div className="flex items-center justify-between mt-2 gap-2">
+                        <p className="text-label-xs text-muted-DEFAULT dark:text-muted-dark truncate">{product.seller?.storeName ?? product.city}</p>
+                        {product.distance_km > 0 && (
+                            <span className="flex items-center gap-0.5 text-label-xs text-muted-DEFAULT dark:text-muted-dark flex-shrink-0">
+                                <MapPin className="w-2.5 h-2.5" />{product.distance_km.toFixed(1)}km
+                            </span>
+                        )}
+                    </div>
 
-                                <div className="flex items-center justify-between">
-                                    <span className="text-label-sm text-[var(--color-text-muted)]">Deal only</span>
-                                    <button
-                                        type="button"
-                                        onClick={() => setDealOnly((prev) => !prev)}
-                                        className={`h-8 w-14 rounded-full transition ${dealOnly ? 'bg-kridha-primary' : 'bg-background-subtle'}`}
-                                    >
-                                        <span
-                                            className={`block h-7 w-7 rounded-full bg-white transition-transform ${dealOnly ? 'translate-x-6' : 'translate-x-1'}`}
-                                        />
-                                    </button>
-                                </div>
-
-                                <Button type="button" variant="primary" size="sm" className="w-full" onClick={() => setMobileFiltersOpen(false)}>
-                                    Apply filters
-                                </Button>
-                            </div>
+                    {/* Rating */}
+                    {stars > 0 && (
+                        <div className="flex items-center gap-1 mt-1.5">
+                            <div className="flex">{[1, 2, 3, 4, 5].map(i => <span key={i} className={`text-[11px] ${i <= Math.round(stars) ? 'text-amber-400' : 'text-gray-300 dark:text-gray-600'}`}>★</span>)}</div>
+                            <span className="text-label-xs text-muted-DEFAULT dark:text-muted-dark">{stars.toFixed(1)}</span>
                         </div>
                     )}
 
-                    <div ref={parentRef} className="space-y-4 pb-32">
-                        {loading ? (
-                            <div className="space-y-4">
-                                <SkeletonCard />
-                                <SkeletonCard />
-                                <SkeletonCard />
-                            </div>
-                        ) : products.length === 0 ? (
-                            <EmptyState />
-                        ) : (
-                            products.map((product) => <ProductCard key={product.id} product={product} />)
-                        )}
+                    {/* Stock indicator */}
+                    {product.available > 0 && product.available <= 10 && (
+                        <p className="text-[11px] text-amber-600 dark:text-amber-400 mt-1 font-medium">Only {product.available} left</p>
+                    )}
+                </div>
+            </div>
+        </Link>
+    );
+}
+
+// ── Filter sheet (mobile bottom drawer / desktop panel) ────────────────────
+function FilterPanel({
+    filters, onChange, onReset, onClose,
+}: {
+    filters: Record<string, string | boolean | undefined>;
+    onChange: (k: string, v: string | boolean | undefined) => void;
+    onReset: () => void;
+    onClose?: () => void;
+}) {
+    const { lang } = useLangStore();
+    return (
+        <div className="bg-[var(--color-surface)] dark:bg-surface-dark h-full flex flex-col">
+            <div className="flex items-center justify-between px-5 py-4 border-b border-border-DEFAULT dark:border-border-dark flex-shrink-0">
+                <h3 className="font-bold text-label-lg text-[var(--color-text)]">{lang === 'hi' ? 'Filters' : 'Filters'}</h3>
+                <div className="flex gap-2">
+                    <button onClick={onReset} className="text-label-sm text-kridha-primary hover:underline">{lang === 'hi' ? 'Reset' : 'Reset all'}</button>
+                    {onClose && <button onClick={onClose} className="p-1 rounded hover:bg-gray-100 dark:hover:bg-gray-800"><X className="w-5 h-5" /></button>}
+                </div>
+            </div>
+            <div className="flex-1 overflow-y-auto px-5 py-4 space-y-6">
+
+                {/* Category */}
+                <div>
+                    <p className="text-label-md font-semibold text-[var(--color-text)] mb-3">{lang === 'hi' ? 'Category' : 'Category'}</p>
+                    <div className="flex flex-wrap gap-2">
+                        {CATEGORIES.map(c => { const sel = filters.category === c.v; return <button key={c.v} type="button" onClick={() => onChange('category', sel ? undefined : c.v)} className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-label-sm font-medium transition-all border ${sel ? 'bg-kridha-primary text-white border-kridha-primary' : 'bg-gray-100 dark:bg-gray-800 text-[var(--color-text)] border-transparent hover:border-kridha-primary hover:text-kridha-primary'}`}><span>{CAT_EMOJI[c.v]}</span>{lang === 'hi' ? c.hi : c.en}</button>; })}
                     </div>
                 </div>
+
+                {/* Price range */}
+                <div>
+                    <p className="text-label-md font-semibold text-[var(--color-text)] mb-3">{lang === 'hi' ? 'Price Range (₹)' : 'Price Range (₹)'}</p>
+                    <div className="grid grid-cols-2 gap-3">
+                        <div><label className="text-label-xs text-muted-DEFAULT dark:text-muted-dark mb-1 block">Min</label><input type="number" min="0" placeholder="₹0" value={filters.minPrice as string ?? ''} onChange={e => onChange('minPrice', e.target.value || undefined)} className="w-full px-3 py-2.5 border border-border-DEFAULT dark:border-border-dark rounded-xl bg-[var(--color-surface)] dark:bg-surface-dark text-[var(--color-text)] text-label-sm outline-none focus:border-kridha-primary focus:ring-2 focus:ring-kridha-primary/20" /></div>
+                        <div><label className="text-label-xs text-muted-DEFAULT dark:text-muted-dark mb-1 block">Max</label><input type="number" min="0" placeholder="₹9999" value={filters.maxPrice as string ?? ''} onChange={e => onChange('maxPrice', e.target.value || undefined)} className="w-full px-3 py-2.5 border border-border-DEFAULT dark:border-border-dark rounded-xl bg-[var(--color-surface)] dark:bg-surface-dark text-[var(--color-text)] text-label-sm outline-none focus:border-kridha-primary focus:ring-2 focus:ring-kridha-primary/20" /></div>
+                    </div>
+                </div>
+
+                {/* Toggle filters */}
+                {[
+                    { k: 'isBranded', en: 'Branded only', hi: 'Branded products', emoji: '🏷️' },
+                    { k: 'dealActive', en: 'Deals only', hi: 'Deal wale products', emoji: '🔥' },
+                ].map(item => (
+                    <div key={item.k} className="flex items-center justify-between">
+                        <div className="flex items-center gap-2"><span className="text-lg">{item.emoji}</span><p className="text-label-md text-[var(--color-text)]">{lang === 'hi' ? item.hi : item.en}</p></div>
+                        <button type="button" role="switch" aria-checked={!!filters[item.k]} onClick={() => onChange(item.k, filters[item.k] ? undefined : true)} className={`relative w-11 h-6 rounded-full transition-colors flex-shrink-0 ${filters[item.k] ? 'bg-kridha-primary' : 'bg-gray-300 dark:bg-gray-600'}`}>
+                            <span className={`absolute top-0.5 w-5 h-5 rounded-full bg-white shadow transition-transform ${filters[item.k] ? 'translate-x-5' : 'translate-x-0.5'}`} />
+                        </button>
+                    </div>
+                ))}
+            </div>
+        </div>
+    );
+}
+
+// ── Skeleton card ─────────────────────────────────────────────────────────
+function SkeletonProduct() {
+    return (
+        <div className="bg-[var(--color-surface)] dark:bg-surface-dark border border-border-DEFAULT dark:border-border-dark rounded-2xl overflow-hidden animate-pulse">
+            <div className="w-full aspect-[4/3] bg-gray-200 dark:bg-gray-700" />
+            <div className="p-3 space-y-2">
+                <div className="h-3 bg-gray-200 dark:bg-gray-700 rounded w-1/3" />
+                <div className="h-4 bg-gray-200 dark:bg-gray-700 rounded w-4/5" />
+                <div className="h-4 bg-gray-200 dark:bg-gray-700 rounded w-2/3" />
+                <div className="h-5 bg-gray-200 dark:bg-gray-700 rounded w-2/5 mt-2" />
+            </div>
+        </div>
+    );
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// MAIN PAGE
+// ════════════════════════════════════════════════════════════════════════════
+export default function ProductsPage() {
+    const { lang } = useLangStore();
+    const { lat, lng, loading: geoLoading, error: geoError, retry } = useGeolocation();
+    const [query, setQuery] = useState('');
+    const [debouncedQ, setDQ] = useState('');
+    const [sortBy, setSortBy] = useState('distance');
+    const [filters, setFilters] = useState<Record<string, string | boolean | undefined>>({});
+    const [filterOpen, setFilterOpen] = useState(false);
+    const loadMoreRef = useRef<HTMLButtonElement>(null);
+
+    // Debounce search
+    useEffect(() => {
+        const t = setTimeout(() => setDQ(query), 400);
+        return () => clearTimeout(t);
+    }, [query]);
+
+    const effectiveLat = lat ?? LUCKNOW_FALLBACK.lat;
+    const effectiveLng = lng ?? LUCKNOW_FALLBACK.lng;
+
+    const { data, fetchNextPage, hasNextPage, isFetchingNextPage, isLoading, isError, isFetching } = useInfiniteQuery<Page>({
+        queryKey: ['products-feed', debouncedQ, sortBy, filters, effectiveLat, effectiveLng],
+        queryFn: async ({ pageParam = 1 }) => {
+            const p = new URLSearchParams({
+                lat: String(effectiveLat), lng: String(effectiveLng),
+                sortBy, page: String(pageParam), limit: '20',
+            });
+            if (debouncedQ) p.set('q', debouncedQ);
+            if (filters.category) p.set('category', filters.category as string);
+            if (filters.minPrice) p.set('minPrice', filters.minPrice as string);
+            if (filters.maxPrice) p.set('maxPrice', filters.maxPrice as string);
+            if (filters.isBranded) p.set('isBranded', 'true');
+            if (filters.dealActive) p.set('dealActive', 'true');
+            const res = await api.get(`/products?${p}`);
+            return res.data.data;
+        },
+        initialPageParam: 1,
+        getNextPageParam: (last) => last.meta.hasMore ? last.meta.page + 1 : undefined,
+        staleTime: 60_000,
+        gcTime: 5 * 60_000,
+        retry: 2,
+    });
+
+    const products = data?.pages.flatMap(p => p.products) ?? [];
+    const totalCount = data?.pages[0]?.meta.total ?? 0;
+    const activeFilterCount = Object.values(filters).filter(Boolean).length;
+
+    function updateFilter(k: string, v: string | boolean | undefined) {
+        setFilters(prev => ({ ...prev, [k]: v }));
+    }
+    function resetFilters() { setFilters({}); }
+    function clearSearch() { setQuery(''); setDQ(''); }
+
+    return (
+        <div className="min-h-screen bg-background-DEFAULT dark:bg-background-dark">
+
+            {/* ── TOP BAR ─────────────────────────────────────────── */}
+            <div className="sticky top-0 z-40 bg-[var(--color-surface)] dark:bg-surface-dark border-b border-border-DEFAULT dark:border-border-dark px-4 py-3 space-y-3">
+                {/* Search bar */}
+                <div className="relative">
+                    <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4.5 h-4.5 text-muted-DEFAULT dark:text-muted-dark" />
+                    <input
+                        type="search"
+                        value={query}
+                        onChange={e => setQuery(e.target.value)}
+                        placeholder={lang === 'hi' ? 'products search करें...' : 'Search products, sellers...'}
+                        className="w-full pl-10 pr-10 py-3 rounded-xl border border-border-DEFAULT dark:border-border-dark bg-gray-50 dark:bg-gray-800/50 text-[var(--color-text)] text-body-sm outline-none focus:border-kridha-primary focus:ring-2 focus:ring-kridha-primary/20 focus:bg-[var(--color-surface)] dark:focus:bg-surface-dark transition-all"
+                    />
+                    {query && <button onClick={clearSearch} className="absolute right-3 top-1/2 -translate-y-1/2 p-0.5 rounded-full text-muted-DEFAULT hover:text-[var(--color-text)] transition-colors"><X className="w-4 h-4" /></button>}
+                </div>
+
+                {/* Filter + Sort row */}
+                <div className="flex items-center gap-2 overflow-x-auto pb-0.5 hide-scrollbar">
+                    {/* Filter trigger */}
+                    <button
+                        onClick={() => setFilterOpen(o => !o)}
+                        className={`flex items-center gap-1.5 px-3 py-2 rounded-xl text-label-sm font-semibold border transition-all flex-shrink-0 ${activeFilterCount > 0 || filterOpen ? 'bg-kridha-primary text-white border-kridha-primary' : 'bg-gray-100 dark:bg-gray-800 text-[var(--color-text)] border-transparent'}`}
+                    >
+                        <SlidersHorizontal className="w-3.5 h-3.5" />
+                        {lang === 'hi' ? 'Filter' : 'Filter'}
+                        {activeFilterCount > 0 && <span className="bg-white/30 text-white text-[10px] font-bold px-1.5 rounded-full">{activeFilterCount}</span>}
+                    </button>
+
+                    {/* Sort pills */}
+                    {SORT_OPTIONS.map(opt => (
+                        <button key={opt.v} onClick={() => setSortBy(opt.v)} className={`flex items-center gap-1 px-3 py-2 rounded-xl text-label-sm font-medium border transition-all flex-shrink-0 ${sortBy === opt.v ? 'bg-kridha-primary text-white border-kridha-primary' : 'bg-gray-100 dark:bg-gray-800 text-[var(--color-text)] border-transparent'}`}>
+                            {opt.v === 'distance' && <MapPin className="w-3 h-3" />}
+                            {lang === 'hi' ? opt.hi : opt.en}
+                        </button>
+                    ))}
+
+                    {/* Quick category pills */}
+                    {CATEGORIES.slice(0, 4).map(c => (
+                        <button key={c.v} onClick={() => updateFilter('category', filters.category === c.v ? undefined : c.v)} className={`px-3 py-2 rounded-xl text-label-sm font-medium border transition-all flex-shrink-0 ${filters.category === c.v ? 'bg-kridha-primary text-white border-kridha-primary' : 'bg-gray-100 dark:bg-gray-800 text-[var(--color-text)] border-transparent'}`}>
+                            {CAT_EMOJI[c.v]} {lang === 'hi' ? c.hi : c.en}
+                        </button>
+                    ))}
+                </div>
+            </div>
+
+            {/* ── FILTER DRAWER ─────────────────────────────────────── */}
+            {filterOpen && (
+                <div className="fixed inset-0 z-50 flex items-end sm:items-start sm:justify-end">
+                    <div className="absolute inset-0 bg-black/40" onClick={() => setFilterOpen(false)} />
+                    <div className="relative w-full sm:w-80 h-[75vh] sm:h-screen bg-[var(--color-surface)] dark:bg-surface-dark rounded-t-2xl sm:rounded-none shadow-2xl flex flex-col overflow-hidden">
+                        <FilterPanel filters={filters} onChange={updateFilter} onReset={() => { resetFilters(); setFilterOpen(false); }} onClose={() => setFilterOpen(false)} />
+                    </div>
+                </div>
+            )}
+
+            {/* ── CONTENT ──────────────────────────────────────────── */}
+            <div className="max-w-7xl mx-auto px-4 py-4">
+
+                {/* Location + result count */}
+                <div className="flex items-center justify-between mb-4 flex-wrap gap-2">
+                    <div className="flex items-center gap-2">
+                        {geoLoading ? (
+                            <span className="flex items-center gap-1.5 text-label-sm text-muted-DEFAULT dark:text-muted-dark"><span className="w-2 h-2 rounded-full bg-amber-400 animate-pulse" />Detecting location...</span>
+                        ) : geoError ? (
+                            <button onClick={retry} className="flex items-center gap-1.5 text-label-sm text-amber-600 dark:text-amber-400 hover:underline"><WifiOff className="w-3.5 h-3.5" />Using Lucknow — retry</button>
+                        ) : (
+                            <span className="flex items-center gap-1.5 text-label-sm text-green-600 dark:text-green-400"><MapPin className="w-3.5 h-3.5" />Location detected</span>
+                        )}
+                    </div>
+                    {!isLoading && <p className="text-label-sm text-muted-DEFAULT dark:text-muted-dark">{totalCount.toLocaleString('en-IN')} {lang === 'hi' ? 'products' : 'products'}{debouncedQ ? ` for "${debouncedQ}"` : ''}</p>}
+                </div>
+
+                {/* Error */}
+                {isError && (
+                    <div className="flex flex-col items-center py-20 gap-3">
+                        <WifiOff className="w-10 h-10 text-muted-DEFAULT dark:text-muted-dark" />
+                        <p className="text-label-md font-semibold text-[var(--color-text)]">{lang === 'hi' ? 'Network error — retry करें' : 'Network error — please retry'}</p>
+                    </div>
+                )}
+
+                {/* Grid */}
+                <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-3 sm:gap-4">
+                    {isLoading && [...Array(10)].map((_, i) => <SkeletonProduct key={i} />)}
+                    {products.map(p => <ProductCard key={p.id} product={p} />)}
+                    {isFetchingNextPage && [...Array(4)].map((_, i) => <SkeletonProduct key={`more-${i}`} />)}
+                </div>
+
+                {/* Empty */}
+                {!isLoading && !isError && products.length === 0 && (
+                    <div className="flex flex-col items-center py-24 gap-4 text-center">
+                        <Package2 className="w-12 h-12 text-muted-DEFAULT dark:text-muted-dark" />
+                        <p className="text-h5 font-bold text-[var(--color-text)]">{lang === 'hi' ? 'कोई product नहीं मिला' : 'No products found'}</p>
+                        <p className="text-label-sm text-muted-DEFAULT dark:text-muted-dark max-w-xs">{debouncedQ ? `"${debouncedQ}" से कोई result नहीं` : 'Try changing your filters or location'}</p>
+                        {(activeFilterCount > 0 || debouncedQ) && <button onClick={() => { resetFilters(); clearSearch(); }} className="px-5 py-2.5 rounded-xl bg-kridha-primary text-white text-label-sm font-semibold hover:bg-kridha-primary-hover transition-colors">Clear all filters</button>}
+                    </div>
+                )}
+
+                {/* Load more */}
+                {hasNextPage && !isFetchingNextPage && (
+                    <div className="flex justify-center mt-8">
+                        <button
+                            ref={loadMoreRef}
+                            onClick={() => fetchNextPage()}
+                            className="flex items-center gap-2 px-6 py-3 rounded-xl border-2 border-kridha-primary text-kridha-primary text-label-md font-semibold hover:bg-kridha-secondary dark:hover:bg-kridha-primary/10 transition-all"
+                        >
+                            <ChevronDown className="w-4 h-4" />
+                            {lang === 'hi' ? 'और देखें' : 'Load more'}
+                        </button>
+                    </div>
+                )}
+
+                {/* All loaded */}
+                {!hasNextPage && products.length > 0 && !isLoading && (
+                    <p className="text-center text-label-sm text-muted-DEFAULT dark:text-muted-dark mt-8 py-4">
+                        {lang === 'hi' ? `सभी ${products.length} products दिखाए गए` : `All ${products.length} products shown`}
+                    </p>
+                )}
             </div>
         </div>
     );

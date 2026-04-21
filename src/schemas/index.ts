@@ -494,7 +494,7 @@ export const AddStoreImagesSchema = z.object({
   images: z
     .array(
       z.object({
-        url: z.string().url(),
+        url: z.string(),
         publicId: z.string().min(1).max(200),
       }),
     )

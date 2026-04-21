@@ -313,6 +313,7 @@ export interface SubOrder {
     phone: string;
   };
 
+  pickupWindow: PickupWindow,
   orderItems: OrderItem[];
 
   createdAt: string;
@@ -452,4 +453,40 @@ export interface SavedProduct {
   product: Product;
 
   createdAt: string;
+}
+
+// src/types/dashboard.ts — ADD these types / replace Product with SellerProduct
+// The old Product type is too narrow. Use SellerProduct for seller dashboard.
+// Keep Product for buyer-side if already defined elsewhere.
+
+// SellerProduct — returned by GET /api/products/mine
+// Matches the shape from productRepo.findBySeller + the totalOrders mapping in route.ts
+export interface ActiveDeal {
+  id:              string;
+  discountPercent: number;
+  expiresAt:       string;
+  status:          'ACTIVE' | 'EXPIRED';
+}
+
+export interface SellerProduct {
+  id:               string;
+  nameEn:           string;
+  nameHi:           string | null;
+  description:      string | null;
+  category:         string;
+  unit:             string;
+  unitIncrement:    number;
+  isBranded:        boolean;
+  available:        number;
+  minOrderQuantity: number;
+  maxOrderQuantity: number | null;
+  imageUrls:        string[];
+  blurHash:         string | null;
+  productStatus:    'ACTIVE' | 'DELETED';
+  priceTiers:       PriceTier[];
+  deals:            ActiveDeal[];
+  totalOrders:      number;  // mapped from _count.orderItems in route.ts
+  createdAt:        string;
+  updatedAt:        string;
+  // location — not returned by findBySeller, no need to map
 }

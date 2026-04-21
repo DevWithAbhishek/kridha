@@ -7,6 +7,7 @@ import jwt from "jsonwebtoken";
 import { Ratelimit } from "@upstash/ratelimit";
 import { Redis } from "@upstash/redis";
 import { logger } from "@/lib/logger";
+import { ERR } from "./lib/errors";
 
 interface JwtPayload {
   userId: string;
@@ -186,10 +187,10 @@ export async function proxy(req: NextRequest) {
           token,
           process.env.JWT_SECRET!,
         ) as JwtPayload;
-        const headers = new Headers(req.headers);
-        headers.set("x-user-id", payload.userId);
-        headers.set("x-user-roles", JSON.stringify(payload.roles));
-        return NextResponse.next({ request: { headers } });
+        if (!payload || typeof payload !== "object" || !payload.userId) {
+          return unauthenticated();
+        }
+        return NextResponse.next();
       } catch {
         return NextResponse.next();
       }
@@ -203,13 +204,14 @@ export async function proxy(req: NextRequest) {
 
   try {
     const payload = jwt.verify(token, process.env.JWT_SECRET!) as JwtPayload;
-    const headers = new Headers(req.headers);
-    headers.set("x-user-id", payload.userId);
-    headers.set("x-user-roles", JSON.stringify(payload.roles));
-    return NextResponse.next({ request: { headers } });
+    if (!payload || typeof payload !== "object" || !payload.userId) {
+      return unauthenticated();
+    }
+    return NextResponse.next();
   } catch {
     // try refresh
     const refresh = req.cookies.get("kridha_refresh")?.value;
+
     if (refresh) {
       return NextResponse.redirect(new URL("/api/auth/refresh", req.url));
     }

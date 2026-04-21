@@ -131,6 +131,18 @@ export const ERR = {
     400,
   ),
 
+  INVALID_TIME_RANGE: new AppError(
+    "INVALID_TIME_RANGE",
+    "Time range selected is invalid.",
+    409,
+  ),
+
+  PICKUP_WINDOW_OVERLAP: new AppError(
+    "PICKUP_WINDOW_OVERLAP",
+    "Requested window overlaps with existing",
+    409,
+  ),
+
   // ── Products ──────────────────────────────────────────────────────────
 
   // 404 — product does not exist or has been soft-deleted

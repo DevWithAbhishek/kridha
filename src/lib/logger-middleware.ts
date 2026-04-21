@@ -4,6 +4,7 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { logger } from "./logger";
+import { getUser } from "./get-user";
 
 type RouteHandler = (
   req: NextRequest,
@@ -16,7 +17,8 @@ export function withLogger(
 ): RouteHandler {
   return async (req, ctx) => {
     const start = Date.now();
-    const userId = req.headers.get("x-user-id") ?? "anon";
+    const user = await getUser(req);
+    const userId = user.userId ?? "anon";
     const method = req.method;
     const path = req.nextUrl.pathname;
 

@@ -57,11 +57,13 @@ export const productService = {
     if (!product) throw ERR.PRODUCT_NOT_FOUND;
     if (product.sellerId != sellerId) throw ERR.FORBIDDEN;
 
-    const { priceTiers, ...rest } = input;
+    const { priceTiers, minOrderQty, maxOrderQty, ...rest } = input;
     return prisma.product.update({
       where: { id: productId },
       data: {
         ...rest,
+        minOrderQuantity: minOrderQty,
+        maxOrderQuantity: maxOrderQty,
         // Replace all price tiers atomically when supplied
         ...(priceTiers
           ? { priceTiers: { deleteMany: {}, create: priceTiers } }

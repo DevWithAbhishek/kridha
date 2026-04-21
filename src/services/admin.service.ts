@@ -18,21 +18,16 @@ export const adminService = {
   async login(input: AdminLoginInput, ip: string) {
     const admin = await adminRepo.findByEmail(input.email);
     // Same message for wrong email and wrong password — prevents enumeration
-    console.log(input.email);
-    console.log(input.email.trim());
-    console.log("admin: ", admin);
     if (!admin) throw ERR.ADMIN_INVALID_CREDENTIALS;
 
     const valid = await verifyAdminPassword(input.password, admin.passwordHash);
-    console.log("valid: ", valid);
     if (!valid) {
       logger.warn({ email: input.email, ip, action: "admin.login.fail" }, "Admin login failed");
       throw ERR.ADMIN_INVALID_CREDENTIALS;
     }
 
     await adminRepo.updateLastLogin(admin.id);
-    const token = signAdminToken(admin.id, admin.role);
-    console.log("token: ", token);
+    const token = signAdminToken(admin.id, admin.role)
 
     logger.info({ adminId: admin.id, ip, action: "admin.login.success" }, "Admin logged in");
     return { token, admin: { id: admin.id, name: admin.name, role: admin.role } };

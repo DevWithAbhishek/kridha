@@ -2,6 +2,7 @@
 
 import * as Sentry from "@sentry/nextjs";
 import Head from "next/head";
+import Link from "next/link";
 import { useEffect, useState } from "react";
 
 class SentryExampleFrontendError extends Error {
@@ -49,21 +50,21 @@ export default function Page() {
 
         <p className="description">
           Click the button below, and view the sample error on the Sentry{" "}
-          <a
+          <Link
             target="_blank"
             rel="noopener"
             href="https://abhishek-kumar-oe.sentry.io/issues/?project=4511149122977792"
           >
             Issues Page
-          </a>
+          </Link>
           . For more details about setting up Sentry,{" "}
-          <a
+          <Link
             target="_blank"
             rel="noopener"
             href="https://docs.sentry.io/platforms/javascript/guides/nextjs/"
           >
             read our docs
-          </a>
+          </Link>
           .
         </p>
 

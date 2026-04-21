@@ -29,7 +29,6 @@ export default function AdminLoginPage() {
         '/auth/login',
         { email, password },
       );
-      console.log("Login successful");
       router.replace('/admin/sellers');
     } catch (err) {
       const e = err as { response?: { data?: { code?: string } } };
@@ -38,7 +37,6 @@ export default function AdminLoginPage() {
         setError('Too many attempts. Wait 1 minute.');
       } else {
         // ADMIN_INVALID_CREDENTIALS — same message for wrong email or wrong password
-        console.log(`Invalid email or password ${err}`);
         setError('Invalid email or password: ');
       }
     } finally {

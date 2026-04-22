@@ -1,9 +1,4 @@
 'use client';
-
-// EditProductModal — fully rewritten to match real product shape.
-// The old version had type Product = { name, price } which doesn't exist in the schema.
-// This version matches the actual API contract and UpdateProductSchema.
-
 import { useState, useEffect, useCallback } from 'react';
 import { useForm, useFieldArray } from 'react-hook-form';
 import { z } from 'zod';
@@ -212,7 +207,6 @@ export function EditProductModal({ open, onClose, product, onSave }: Props) {
             onSave();
             onClose();
         } catch (err) {
-            console.log(err);
             setSubmitErr(lang === 'hi' ? 'Update नहीं हुआ — retry करें' : 'Update failed — please retry');
         }
     }

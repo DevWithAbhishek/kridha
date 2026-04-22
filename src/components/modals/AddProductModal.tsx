@@ -196,7 +196,7 @@ export function AddProductModal({ open, onClose, onSave }: Props) {
                 return;
             }
 
-            const res = await api.post('/products', {
+            const res = await api.post('/products/mine', {
                 ...values,
                 imageUrls: images.map(i => i.url),
                 blurHash: images[0]?.blurHash,

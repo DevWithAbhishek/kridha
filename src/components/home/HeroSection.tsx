@@ -3,9 +3,11 @@ import { useTranslations } from 'next-intl';
 import Image from 'next/image';
 import { Button } from '@/components/ui/Button';
 import Link from 'next/link';
+import { useLogin } from '@/hooks/useLogin';
 
 export function HeroSection() {
     const t = useTranslations('hero');
+    const { loading, isLoggedIn } = useLogin();
 
     return (
         <section className="relative bg-hero-pattern dark:bg-gradient-to-b dark:from-gray-900 dark:to-gray-800 py-16 lg:py-24">
@@ -36,13 +38,29 @@ export function HeroSection() {
 
                         {/* CTAs */}
                         <div className="flex flex-col sm:flex-row gap-4 mb-8">
-                            <Button variant="primary" size="lg" asChild>
-                                <Link href="/login">{t('cta_buyer')}</Link>
-                            </Button>
+                            {!loading && (
+                                isLoggedIn ? (
+                                    <>
+                                        <Button variant="primary" size="lg" asChild>
+                                            <Link href="/products">{t('cta_buyer')}</Link>
+                                        </Button>
 
-                            <Button variant="outline" size="lg" asChild>
-                                <Link href="/seller-registration">{t('cta_seller')}</Link>
-                            </Button>
+                                        <Button variant="outline" size="lg" asChild>
+                                            <Link href="/profile/dashboard">Go to Dashboard</Link>
+                                        </Button>
+                                    </>
+                                ) : (
+                                        <>
+                                            <Button variant="primary" size="lg" asChild>
+                                                <Link href="/products">{t('cta_buyer')}</Link>
+                                            </Button>
+
+                                            <Button variant="outline" size="lg" asChild>
+                                                <Link href="/seller-registration">{t('cta_seller')}</Link>
+                                            </Button>
+                                        </>
+                                )
+                            )}
                         </div>
 
                         {/* Trust row */}

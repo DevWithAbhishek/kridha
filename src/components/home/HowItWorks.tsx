@@ -23,7 +23,7 @@ export async function HowItWorks() {
     ];
 
     return (
-        <section className="bg-kridha-secondary/30 dark:bg-gray-800/50 py-section-y">
+        <section id="how" className="bg-kridha-secondary/30 dark:bg-gray-800/50 py-section-y">
             <div className="max-w-page mx-auto px-page-x md:px-page-x-md">
                 <div className="text-center mb-12">
                     <h2 className="text-h1 font-bold text-[var(--color-text)] mb-4">

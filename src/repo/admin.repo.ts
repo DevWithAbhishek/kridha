@@ -83,7 +83,7 @@ export const adminRepo = {
   ) {
     return prisma.sellerProfile.update({
       where: { userId },
-      data:  { profileStatus, kycStatus },
+      data: { profileStatus, kycStatus, bankVerified: true },
       select: { userId: true, profileStatus: true, kycStatus: true },
     });
   },

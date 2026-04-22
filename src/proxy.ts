@@ -1,13 +1,8 @@
-// Replaces the previous version. Rate limiting added before auth check.
-// Auth endpoints: 5 req/min per IP. All other: 60 req/min per IP.
-// ─────────────────────────────────────────────────────────────────────────────
-
 import { NextRequest, NextResponse } from "next/server";
 import jwt from "jsonwebtoken";
 import { Ratelimit } from "@upstash/ratelimit";
 import { Redis } from "@upstash/redis";
 import { logger } from "@/lib/logger";
-import { ERR } from "./lib/errors";
 
 interface JwtPayload {
   userId: string;
@@ -50,6 +45,7 @@ const PUBLIC_EXACT = new Set([
   "/api/auth/refresh",
   "/api/auth/reset-pin-request",
   "/api/auth/reset-pin",
+  "/api/auth/me",
   "/api/health",
   "/api/webhooks/razorpay",
   "/api/pincode",

@@ -183,7 +183,7 @@ export const EditSellerProfileSchema = z.object({
   landmark: z.string().optional(),
   city: z.string().optional(),
   state: z.string().optional(),
-  pincode: z
+  pinCode: z
     .string()
     .length(6)
     .regex(/^[0-9]{6}$/)
@@ -191,8 +191,8 @@ export const EditSellerProfileSchema = z.object({
   businessType: z
     .enum(["INDIVIDUAL", "PROPRIETORSHIP", "PARTNERSHIP", "PVT_LTD"])
     .optional(),
-  gstNo: z.string().optional(),
-  panNo: z.string().min(10).max(10).optional(),
+  gstNumber: z.string().optional(),
+  panNumber: z.string().min(10).max(10).optional(),
   accountHolderName: z.string().min(2).optional(),
   accountNumber: z.string().min(8).max(18).optional(),
   ifscCode: z

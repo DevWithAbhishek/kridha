@@ -1,29 +1,35 @@
-// Proactive refresh: fires 2 minutes before kridha_access expires.
-// Reads expiry from the JWT without verifying (client doesn't have the secret —
-// we just need the exp claim to schedule the next refresh).
-// Falls back to 13-minute interval if decoding fails.
-
-import axios from "axios";
+import { refreshClient } from "@/lib/api";
 
 let refreshTimer: ReturnType<typeof setTimeout> | null = null;
 
+// Session signal: non-HttpOnly expiry cookie
+function hasSession(): boolean {
+  return document.cookie.includes("kridha_access_exp=");
+}
+
 function getAccessTokenExpiry(): number | null {
-  // kridha_access is HttpOnly — we cannot read it from JS.
-  // kridha_lang is NOT HttpOnly — we can read it.
-  // Solution: server sets a non-HttpOnly mirror cookie "kridha_access_exp"
-  // containing ONLY the expiry timestamp (no sensitive data).
   const match = document.cookie.match(/kridha_access_exp=([^;]+)/);
   if (!match) return null;
-  return parseInt(match[1], 10); // Unix timestamp in seconds
+  return parseInt(match[1], 10);
 }
 
 async function doRefresh(): Promise<void> {
   try {
-    await axios.post("/api/auth/refresh", null, { withCredentials: true });
-    scheduleNextRefresh(); // reschedule after successful refresh
+    // 🔥 Guard: do not refresh if no session
+    if (!hasSession()) return;
+
+    // Use clean client → no interceptor recursion
+    await refreshClient.post("/auth/refresh");
+
+    // Reschedule only on success
+    scheduleNextRefresh();
   } catch {
-    // Refresh token also expired — redirect to login
-    window.location.href = "/login";
+    // 🔥 Hard stop on failure (no loops)
+    stopTokenRefresher();
+
+    if (typeof window !== "undefined") {
+      window.location.href = "/login";
+    }
   }
 }
 
@@ -38,7 +44,7 @@ function scheduleNextRefresh(): void {
     // Refresh 2 minutes before expiry
     msUntilRefresh = Math.max(msUntilExpiry - 2 * 60 * 1000, 0);
   } else {
-    // Fallback: refresh every 13 minutes (access token is 15min)
+    // Fallback (should be rare if cookie exists)
     msUntilRefresh = 13 * 60 * 1000;
   }
 
@@ -46,7 +52,11 @@ function scheduleNextRefresh(): void {
 }
 
 export function startTokenRefresher(): void {
-  if (typeof window === "undefined") return; // SSR guard
+  if (typeof window === "undefined") return;
+
+  // 🔥 Guard: only start if session exists
+  if (!hasSession()) return;
+
   scheduleNextRefresh();
 }
 

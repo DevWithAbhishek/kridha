@@ -45,7 +45,9 @@ export async function DELETE(req: NextRequest, { params }: ImageParams) {
       if (!exists) return;
 
       const filtered = current.filter((img) => img.publicId !== publicId);
-      AddStoreImagesSchema.parse(filtered);
+      AddStoreImagesSchema.parse({
+        images: filtered,
+      });
 
       await tx.sellerProfile.update({
         where: { userId: user.userId },

@@ -33,8 +33,6 @@ export async function POST(req: NextRequest) {
     const user = await requireRole(req, Role.SELLER);
     const rawBody = await req.json();
     const body = AddStoreImagesSchema.parse(rawBody);
-    console.log("rawBody: ", rawBody);
-    console.log("Body: ", body);
     
     const updated = await prisma.$transaction(async (tx) => {
       const profile = await tx.sellerProfile.findUnique({

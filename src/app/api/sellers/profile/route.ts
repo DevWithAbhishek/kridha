@@ -51,7 +51,7 @@ export async function PATCH(req: NextRequest) {
       if (conflict) throw ERR.STORE_EXISTS;
     }
 
-    if (body.businessType || body.gstNo || body.panNo || body.accountHolderName || body.accountNumber || body.bankName || body.ifscCode) {
+    if (body.businessType || body.gstNumber || body.panNumber || body.accountHolderName || body.accountNumber || body.bankName || body.ifscCode) {
       const valid = await sellerService.checkValidChange(user.userId);
       if (valid) {
         const updated = await sellerService.updateSellerCriticalDetails(user.userId, body);

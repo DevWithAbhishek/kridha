@@ -22,9 +22,11 @@ import { ThemeToggle } from "@/components/shared/ThemeToggle";
 import { LanguageToggle } from "@/components/shared/LanguageToggle";
 import * as Dialog from "@radix-ui/react-dialog";
 import { X } from "lucide-react";
+import { RoleToggle } from "@/components/shared/RoleToggle";
+import { LogoutButton } from "@/components/shared/LogoutButton";
 
 const sellerNav = [
-  { href: "/seller/dashboard", label: "Dashboard", icon: Home },
+  { href: "/seller/dashboard", label: "Dashboard", icon: User },
   { href: "/seller/products", label: "My Products", icon: ShoppingCart },
   { href: "/seller/orders", label: "My Orders", icon: Box },
   { href: "/seller/deals", label: "Deals", icon: BadgePercent },
@@ -39,11 +41,10 @@ const accountNav = [
   { href: "/seller/notifications", label: "Notifications", icon: Bell },
   { href: "/seller/analytics", label: "Analytics", icon: ChartLine },
   { href: "/seller/settings", label: "Settings", icon: Settings },
-  { href: "/logout", label: "Logout", icon: LogOut },
 ];
 
 const bottomTabs = [
-  { href: "/seller/dashboard", label: "Home", icon: Home },
+  { href: "/seller/dashboard", label: "Home", icon: User },
   { href: "/seller/products", label: "Products", icon: ShoppingCart },
   { href: "/seller/orders", label: "Orders", icon: Box },
   { href: "/seller/deals", label: "Deals", icon: BadgePercent },
@@ -81,9 +82,12 @@ export default function AccountLayout({
   return (
     <AuthGuard requireSeller>
       <div className="min-h-screen bg-[var(--color-bg)]">
-        <aside className="hidden lg:block bg-[var(--color-surface)] dark:bg-surface-dark border-r border-[var(--color-border)] h-screen fixed left-0 top-0 pt-6 pb-6 overflow-y-auto z-sticky w-64 flex-col justify-around">
-          <div className="flex items-center px-4 mb-2 justify-between">
-            <div className="flex items-center gap-3">
+        <aside className="hidden lg:block bg-[var(--color-surface)] dark:bg-surface-dark border-r border-[var(--color-border)] h-screen fixed left-0 top-0 pt-6 pb-6 overflow-y-auto z-sticky w-64">
+          <div className="flex items-center px-4 mb-6 justify-between">
+            <Link
+              href="/"
+              className="flex items-center hover:cursor-pointer gap-3"
+            >
               <Image
                 src="/images/kridha_logo_nav.png"
                 alt="Kridha"
@@ -93,8 +97,12 @@ export default function AccountLayout({
               <span className="text-h5 font-bold text-kridha-primary">
                 Kridha
               </span>
-            </div>
+            </Link>
             <ThemeToggle />
+          </div>
+          <div className="my-3 flex justify-center gap-2">
+            <RoleToggle />
+            <LanguageToggle />
           </div>
           <div className="mt-8 px-2 space-y-1">
             {renderNav(sellerNav)}
@@ -102,9 +110,9 @@ export default function AccountLayout({
               Account
             </div>
             {renderNav(accountNav)}
-          </div>
-          <div className="my-3 flex justify-center">
-            <LanguageToggle />
+            <div className="mt-2">
+              <LogoutButton />
+            </div>
           </div>
         </aside>
 
@@ -173,9 +181,6 @@ export default function AccountLayout({
                       {/* SELLER NAV */}
                       {isSeller && (
                         <div className="mb-6">
-                          <p className="text-xs text-[var(--color-text-muted)] mb-2 px-1">
-                            Seller
-                          </p>
                           <div className="space-y-1">
                             {renderNav(sellerNav)}
                           </div>
@@ -188,6 +193,9 @@ export default function AccountLayout({
                           Account
                         </p>
                         <div className="space-y-1">{renderNav(accountNav)}</div>
+                        <div className="mt-2">
+                          <LogoutButton />
+                        </div>
                       </div>
                     </Dialog.Content>
                   </Dialog.Portal>

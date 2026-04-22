@@ -1,7 +1,4 @@
 "use client";
-// src/app/(seller)/seller/dashboard/page.tsx
-// CHANGE: All EditableKV inline-edit replaced by tabbed EditProfileModal (Address/Business/Bank)
-// All layout, section order, content, and fields preserved
 
 import { useState } from "react";
 import Image from "next/image";
@@ -906,7 +903,7 @@ export default function SellerDashboardPage() {
     <div className="max-w-5xl mx-auto px-4 sm:px-6 py-6 space-y-6">
       {/* Hero */}
       <div className="bg-[var(--color-surface)] dark:bg-surface-dark border border-border-DEFAULT dark:border-border-dark rounded-2xl overflow-hidden">
-        <div className="relative h-24 w-full rounded-2xl overflow-hidden">
+        <div className="relative h-24 w-full rounded-2xl overflow-hidden mb-3">
           {avatar ? (
             <Image
               src={avatar}

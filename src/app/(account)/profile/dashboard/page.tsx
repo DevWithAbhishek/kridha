@@ -1,9 +1,4 @@
 "use client";
-// src/app/(buyer)/profile/page.tsx
-// Buyer profile dashboard — mirrors seller dashboard design.
-// All user fields from userRepo.findUser, modal-based edit (no inline edit),
-// avatar upload via Cloudinary, delete account at bottom.
-
 import { useState } from "react";
 import Image from "next/image";
 import Link from "next/link";
@@ -18,18 +13,12 @@ import {
   Heart,
   Bell,
   AlertCircle,
-  CheckCircle2,
   ShoppingCart,
-  Clock,
   BookmarkIcon,
   Star,
   Upload,
-  Loader2,
-  Shield,
   Trash2,
   UserX,
-  Phone,
-  Calendar,
   Languages,
 } from "lucide-react";
 import { api } from "@/lib/api";
@@ -648,7 +637,14 @@ export default function BuyerProfilePage() {
     <div className="max-w-3xl mx-auto px-4 sm:px-6 py-6 space-y-6">
       {/* Hero */}
       <div className="bg-[var(--color-surface)] dark:bg-surface-dark border border-border-DEFAULT dark:border-border-dark rounded-2xl overflow-hidden">
-        <div className="h-20 bg-gradient-to-r from-kridha-primary/20 via-kridha-secondary dark:via-kridha-primary/10 to-transparent" />
+        <div className="relative h-24 w-full rounded-2xl overflow-hidden mb-3">
+                    <Image
+                      src= "/images/kridha_logo_footer.png"
+                      alt= "kridha"
+                      fill
+                      className="object-cover"
+                    />
+                </div>
         <div className="px-5 pb-5 -mt-10 flex items-end justify-between gap-4 flex-wrap">
           <div className="relative">
             <button

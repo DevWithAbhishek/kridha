@@ -10,7 +10,7 @@ interface PriceTierDisplayProps {
 
 export function PriceTierDisplay({ tiers, currentQty, unit, activeDeal }: PriceTierDisplayProps) {
     const sortedTiers = [...tiers].sort((a, b) => a.minQty - b.minQty);
-    const activeTierIndex = sortedTiers.findIndex((tier) => currentQty >= tier.minQty && (tier.maxQty === null || currentQty <= tier.maxQty));
+    const activeTierIndex = sortedTiers.findIndex((tier) => currentQty >= tier.minQty && (tier.maxQty === null || tier.maxQty === undefined || currentQty <= tier.maxQty));
 
     return (
         <div className="w-full text-body-sm border border-border rounded-card overflow-hidden">

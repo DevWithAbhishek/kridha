@@ -20,8 +20,6 @@ export function Navbar() {
 
   const navLinks = [
     { href: "/", label: t("home") },
-    { href: "/products", label: t("products") },
-    { href: "#how", label: t("how_it_works") },
   ];
 
   const isActive = (href: string) => pathname === href;

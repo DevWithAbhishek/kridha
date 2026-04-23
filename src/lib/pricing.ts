@@ -1,4 +1,4 @@
-import { PriceTier } from "@prisma/client";
+import { PriceTier } from "@/types/dashboard";
 import { AppError } from "./errors";
 
 /**

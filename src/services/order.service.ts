@@ -1,4 +1,4 @@
-import { Prisma} from "@prisma/client";
+import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/db";
 import { ERR } from "@/lib/errors";
 import { calcUnitPrice } from "@/lib/pricing";
@@ -7,7 +7,7 @@ import { isCancellable, validateTransition } from "@/lib/state-machine";
 import { calcRefundAmount } from "@/lib/refund";
 import { GetOrdersInput } from "@/schemas";
 import { orderRepo } from "@/repo/order.repo";
-import { OrderStatus } from "@/types/dashboard";
+import { OrderStatus } from "@prisma/client";
 
 export interface CreateItem {
   productId: string;
@@ -25,15 +25,29 @@ export const orderService = {
       }>;
     };
 
-    const enriched: EnrichedItem[] = [];
-    for (const item of items) {
-      const product = await prisma.product.findUnique({
-        where: { id: item.productId, productStatus: "ACTIVE", deletedAt: null },
-        include: { priceTiers: true },
-      });
-      if (!product) throw ERR.PRODUCT_NOT_FOUND;
-    }
+    const productIds = items.map((i) => i.productId);
+    const products = await prisma.product.findMany({
+      where: {
+        id: { in: productIds },
+        productStatus: "ACTIVE",
+        deletedAt: null,
+      },
+      include: { priceTiers: true },
+    });
 
+    const productMap = new Map(products.map((p) => [p.id, p]));
+    const enriched: EnrichedItem[] = items.map((item) => {
+      const product = productMap.get(item.productId);
+      if (!product) throw ERR.PRODUCT_NOT_FOUND;
+      return {
+        ...item,
+        product,
+      };
+    });
+
+    if (!enriched.length) {
+      throw ERR.CART_EMPTY;
+    }
     const bySeller = new Map<string, typeof enriched>();
     for (const item of enriched) {
       const arr = bySeller.get(item.product.sellerId) ?? [];
@@ -73,7 +87,7 @@ export const orderService = {
         for (const item of sellerItems) {
           // SELECT FOR UPDATE — prevents overselling (INV-01)
           const [locked] = await tx.$queryRaw<[{ available: number }]>(
-            Prisma.sql`SELECT available FROM Product WHERE id = ${item.productId} FOR UPDATE`,
+            Prisma.sql`SELECT available FROM "Product" WHERE id = ${item.productId} FOR UPDATE`,
           );
           if (locked.available < item.quantity) {
             throw ERR.INSUFFICIENT_STOCK({
@@ -116,7 +130,7 @@ export const orderService = {
         const adv = parseFloat(
           Math.min(
             cfg.advanceCapAmount,
-            Math.min(
+            Math.max(
               cfg.advanceMinAmount,
               sellerTotal * (cfg.advancePercent / 100),
             ),
@@ -147,6 +161,10 @@ export const orderService = {
           pickupDeadline,
           lines,
         });
+      }
+
+      if (grandTotal <= 0 || totalAdvance <= 0) {
+        throw ERR.BELOW_MINIMUM_ORDER;
       }
 
       const order = await tx.order.create({
@@ -200,7 +218,8 @@ export const orderService = {
         currency: "INR",
         receipt: result.order.id,
       })
-      .catch(() => {
+      .catch((err) => {
+        console.error("Razorpay error:", err);
         throw ERR.RAZORPAY_ERROR;
       });
 
@@ -329,7 +348,6 @@ export const orderService = {
       pickupWindowId: ci.pickupWindowId,
       pickUpDate: ci.pickupDate,
     }));
-
     const result = await orderService.create(buyerId, items, cartSessionId);
 
     // Clear cart after successful checkout (INV-19)
@@ -339,12 +357,10 @@ export const orderService = {
 
   async getSubOrders(userId: string, q: GetOrdersInput) {
     return await orderRepo.listSubOrders(userId, {
-              status: q.status as OrderStatus,
-              page: q.page ?? 1,
-              limit: q.limit ?? 20,
-              sortBy: (q.sortBy ?? "created_desc") as
-                | "created_asc"
-                | "created_desc",
-            });
-  }
+      status: q.status as OrderStatus,
+      page: q.page ?? 1,
+      limit: q.limit ?? 20,
+      sortBy: (q.sortBy ?? "created_desc") as "created_asc" | "created_desc",
+    });
+  },
 };

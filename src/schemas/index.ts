@@ -252,7 +252,7 @@ export const GetProductsSchema = z
     q: z.string().optional(),
     lat: z.coerce.number().min(8).max(37),
     lng: z.coerce.number().min(68).max(98),
-    radius: z.coerce.number().positive().max(50).optional().default(10),
+    radius: z.coerce.number().positive().max(50).optional().default(20),
     category: ProductCategoryEnum.optional(),
     minPrice: z.coerce.number().positive().optional(),
     maxPrice: z.coerce.number().positive().optional(),
@@ -511,8 +511,8 @@ export const GetNotificationsSchema = z.object({
 });
 
 export const AddReviewSchema = z.object({
-  subOrderId: z.string().cuid(),
-  productId: z.string().cuid(),
+  subOrderId: z.cuid(),
+  productId: z.cuid(),
   rating: z.number().int().min(1).max(5),
   comment: z.string().max(1000).optional(),
 });
@@ -527,8 +527,8 @@ export const UpdateReviewSchema = z
   });
 
 export const GetReviewsSchema = z.object({
-  productId: z.string().cuid().optional(),
-  sellerId: z.string().cuid().optional(),
+  productId: z.cuid().optional(),
+  sellerId: z.cuid().optional(),
   page: z.coerce.number().int().min(1).default(1),
   limit: z.coerce.number().int().min(1).max(50).default(20),
 });

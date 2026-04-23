@@ -10,7 +10,7 @@ interface GeoState {
   retry: () => void;
 }
 
-export const LUCKNOW_FALLBACK = { lat: 26.8467, lng: 80.9462 };
+export const LUCKNOW_FALLBACK = { lat: 26.713254, lng: 83.330011 };
 
 export function useGeolocation(): GeoState {
   const [state, setState] = useState<GeoState>({

@@ -4,16 +4,15 @@ import { OrderStatus } from "@prisma/client";
 export const orderRepo = {
   // Fetch single Suborder with full joins for detailview
   async findSubOrderById(id: string) {
-    return prisma.subOrder.findUnique({
+    const subOrder = await prisma.subOrder.findUnique({
       where: { id },
-      // Aggregates multiple relations (order, items, history, seller, pickup) into a single query response. Prisma internally generates optimized JOINs / batched queries to avoid N+1 issues.
       include: {
-        order: { select: { id: true, buyerId: true, totalAmount: true } }, // fetches only specific fields (id, buyerId, totalAmount) from the related order.
+        order: { select: { id: true, buyerId: true, totalAmount: true } },
         orderItems: {
           include: {
             product: { select: { nameEn: true, nameHi: true, unit: true } },
           },
-        }, // Loads order items and joins each item with its product details (name + unit). Nested include performs relation traversal (subOrder → orderItems → product).
+        },
         statusHistory: { orderBy: { createdAt: "asc" } },
         pickupWindow: true,
         seller: {
@@ -23,9 +22,29 @@ export const orderRepo = {
             reliabilityScore: true,
             user: { select: { id: true, name: true } },
           },
-        }, //Fetches selected seller fields along with nested user info (id, name). Uses deep selective projection to optimize nested relation payload.
+        },
       },
     });
+
+    if (!subOrder) return null;
+    return {
+      ...subOrder,
+
+      orderItems: subOrder.orderItems.map((i) => ({
+        productId: i.productId,
+        productNameEn: i.product.nameEn,
+        quantity: i.quantity,
+        unitPrice: i.unitPrice,
+        subtotal: i.subTotal, // ✅ FIX
+      })),
+
+      seller: {
+        id: subOrder.seller.user.id,
+        name: subOrder.seller.user.name,
+        storeName: subOrder.seller.storeName,
+        reliabilityScore: subOrder.seller.reliabilityScore,
+      },
+    };
   },
 
   // List SubOrders for a user — buyer sees placed orders, seller sees received orders
@@ -77,8 +96,31 @@ export const orderRepo = {
       prisma.subOrder.count({ where }), // Counts total subOrders matching filters without fetching actual rows.
     ]);
 
+    const formatted = subOrders.map((sub) => ({
+      id: sub.id,
+      shortId: sub.shortId,
+      orderId: sub.orderId,
+      status: sub.status,
+      totalAmount: sub.totalAmount,
+      advanceAmount: sub.advanceAmount,
+      pickupDate: sub.pickupDate,
+      createdAt: sub.createdAt,
+
+      pickupWindow: sub.pickupWindow,
+
+      seller: {
+        storeName: sub.seller?.storeName,
+      },
+
+      // ✅ THIS IS YOUR FIX
+      orderItems: sub.orderItems.map((i) => ({
+        productNameEn: i.product.nameEn,
+        quantity: i.quantity,
+      })),
+    }));
+
     return {
-      subOrders,
+      subOrders: formatted,
       meta: {
         page: safePage,
         limit: safeLimit,

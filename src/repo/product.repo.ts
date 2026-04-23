@@ -188,97 +188,59 @@ export const productRepo = {
     };
 
     const whereClause = buildWhereClause(filters);
+
     const orderClause = buildOrderClause(filters.sortBy, input.lat, input.lng);
-
-    // Price filter: min_price is a scalar subquery alias — cannot use HAVING without GROUP BY.
-    // Wrap the base query in a CTE and filter on min_price in the outer WHERE.
-    // When no price filter: priceWhereClause = Prisma.empty → no overhead.
-    const priceWhereClause = (() => {
-      const parts: Prisma.Sql[] = [];
-      if (input.minPrice !== undefined)
-        parts.push(Prisma.sql`min_price >= ${input.minPrice}`);
-      if (input.maxPrice !== undefined)
-        parts.push(Prisma.sql`min_price <= ${input.maxPrice}`);
-      if (!parts.length) return Prisma.empty;
-      return Prisma.sql`WHERE ${Prisma.join(parts, " AND ")}`;
-    })();
-
-    const hasPriceFilter =
-      input.minPrice !== undefined || input.maxPrice !== undefined;
 
     // -----------------------------------------------------------------------
     // DATA QUERY
-    // When price filter is active: wrap in CTE so min_price alias is filterable.
-    // When no price filter: simpler single-level query.
     // -----------------------------------------------------------------------
-    let dataQuery: Prisma.Sql;
-    let countQuery: Prisma.Sql;
+    const dataQuery = Prisma.sql`
+  SELECT
+    p.*,
+    ST_Distance(
+      COALESCE(p.location, ST_SetSRID(ST_MakePoint(p."longitude", p."latitude"), 4326)::geography),
+      ST_MakePoint(${input.lng}, ${input.lat})::geography
+    ) / 1000 AS distance_km,
 
-    if (hasPriceFilter) {
-      // CTE approach: base query computes min_price, outer query filters on it
-      dataQuery = Prisma.sql`
-        WITH base AS (
-          SELECT
-            p.*,
-            ST_Distance(
-              p.location,
-              ST_MakePoint(${input.lng}, ${input.lat})::geography
-            ) / 1000 AS distance_km,
-            (
-              SELECT MIN(pt."pricePerUnit")
-              FROM "PriceTier" pt
-              WHERE pt."productId" = p.id
-            ) AS min_price
-          FROM "Product" p
-          ${whereClause}
+    -- FIX: price at minOrderQuantity, not MIN() across all tiers
+    -- Finds the highest minQty tier that is still <= minOrderQuantity
+    -- This matches exactly what calcUnitPrice() returns for a new buyer
+    (
+  SELECT
+    CASE
+      WHEN d."discountPercent" IS NOT NULL
+        THEN ROUND(
+          (pt."pricePerUnit" * (1 - d."discountPercent" / 100.0))::numeric,
+          2
         )
-        SELECT * FROM base
-        ${priceWhereClause}
-        ${orderClause}
-        LIMIT ${safeLimit} OFFSET ${offset}
-      `;
+      ELSE pt."pricePerUnit"
+    END
+  FROM "PriceTier" pt
+  LEFT JOIN "Deal" d
+    ON d."productId" = pt."productId"
+    AND d."status"    = 'ACTIVE'
+    AND d."expiresAt" > NOW()
+  WHERE pt."productId" = p.id
+    AND pt."minQty"    <= p."minOrderQuantity"
+  ORDER BY pt."minQty" DESC
+  LIMIT 1
+) AS min_price
 
-      countQuery = Prisma.sql`
-        WITH base AS (
-          SELECT
-            p.id,
-            (
-              SELECT MIN(pt."pricePerUnit")
-              FROM "PriceTier" pt
-              WHERE pt."productId" = p.id
-            ) AS min_price
-          FROM "Product" p
-          ${whereClause}
-        )
-        SELECT COUNT(*) AS count FROM base
-        ${priceWhereClause}
-      `;
-    } else {
-      // No price filter — simpler query, no CTE overhead
-      dataQuery = Prisma.sql`
-        SELECT
-          p.*,
-          ST_Distance(
-            p.location,
-            ST_MakePoint(${input.lng}, ${input.lat})::geography
-          ) / 1000 AS distance_km,
-          (
-            SELECT MIN(pt."pricePerUnit")
-            FROM "PriceTier" pt
-            WHERE pt."productId" = p.id
-          ) AS min_price
-        FROM "Product" p
-        ${whereClause}
-        ${orderClause}
-        LIMIT ${safeLimit} OFFSET ${offset}
-      `;
+  FROM "Product" p
+  ${whereClause}
+  ${orderClause}
+  LIMIT ${safeLimit} OFFSET ${offset}
+`;
+    // -----------------------------------------------------------------------
+    // COUNT QUERY
+    // -----------------------------------------------------------------------
+    const countQuery = Prisma.sql`
+  SELECT COUNT(*) AS count
+  FROM "Product" p
 
-      countQuery = Prisma.sql`
-        SELECT COUNT(*) AS count
-        FROM "Product" p
-        ${whereClause}
-      `;
-    }
+  -- ✅ Same filters applied → guarantees consistency
+  ${whereClause}
+`;
 
     const [rows, countResult] = await Promise.all([
       prisma.$queryRaw<ProductRow[]>(dataQuery),

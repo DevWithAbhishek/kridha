@@ -22,16 +22,20 @@ export interface NearbyFilters {
  */
 
 export function buildWhereClause(f: NearbyFilters): Prisma.Sql {
-  // Filters products within a given radius from user location using PostGIS ST_DWithin (index-optimized distance check).
+  // FIX: COALESCE handles NULL location — falls back to lat/lng columns
+  // This makes ST_DWithin work even if the generated column isn't populated
   const geoFilter = Prisma.sql`
     AND ST_DWithin(
-        p.location,
+        COALESCE(
+          p."location",
+          ST_SetSRID(ST_MakePoint(p."longitude", p."latitude"), 4326)::geography
+        ),
         ST_MakePoint(${f.lng}, ${f.lat})::geography,
         ${f.radiusM}
     )`;
 
   const categoryClause = f.category
-    ? Prisma.sql`AND p.category::text = ${f.category}`
+    ? Prisma.sql`AND p."category" = ${f.category}::"ProductCategory"`
     : Prisma.empty;
 
   const brandedClause =
@@ -39,18 +43,16 @@ export function buildWhereClause(f: NearbyFilters): Prisma.Sql {
       ? Prisma.sql`AND p."isBranded" = ${f.isBranded}`
       : Prisma.empty;
 
-  // dealActive = true → Conditionally adds a filter to return only products having at least one currently active (non-expired) deal using EXISTS.
   const dealClause = f.dealActive
     ? Prisma.sql`
         AND EXISTS (
             SELECT 1 FROM "Deal" d
             WHERE d."productId" = p.id
-            AND d.status = 'ACTIVE'
-            AND d.expiresAt > NOW()
+            AND d."status" = 'ACTIVE'
+            AND d."expiresAt" > NOW()
         )`
     : Prisma.empty;
 
-  // ILIKE uses the pg_trgm GIN index on nameEn / nameHi
   const searchClause = f.q
     ? Prisma.sql`
     AND (
@@ -63,10 +65,24 @@ export function buildWhereClause(f: NearbyFilters): Prisma.Sql {
     ? Prisma.sql`AND p."sellerId" != ${f.excludeSellerId}`
     : Prisma.empty;
 
-  // Price range filters operate on MIN(priceTier.pricePerUnit)
-  // Evaluated as a HAVING clause in the outer query via min_price alias
-  // These are applied post-aggregation — handled in the outer SELECT, not here
-  // (minPrice / maxPrice filtering is done in buildDataQuery via HAVING)
+  const priceExistsClause =
+    Number.isFinite(f.minPrice) || Number.isFinite(f.maxPrice)
+      ? Prisma.sql`
+      AND EXISTS (
+        SELECT 1 FROM "PriceTier" pt
+        WHERE pt."productId" = p.id
+        ${
+          Number.isFinite(f.minPrice)
+            ? Prisma.sql`AND pt."pricePerUnit" >= ${f.minPrice}`
+            : Prisma.empty
+        }
+        ${
+          Number.isFinite(f.maxPrice)
+            ? Prisma.sql`AND pt."pricePerUnit" <= ${f.maxPrice}`
+            : Prisma.empty
+        }
+      )`
+      : Prisma.empty;
 
   return Prisma.sql`
     WHERE p."productStatus" = 'ACTIVE'
@@ -76,15 +92,10 @@ export function buildWhereClause(f: NearbyFilters): Prisma.Sql {
     ${brandedClause}
     ${dealClause}
     ${searchClause}
-    ${excludeClause}`;
+    ${excludeClause}
+    ${priceExistsClause}
+  `;
 }
-
-/**
- * ORDER BY clause.
- * distance: KNN operator <-> uses the GIST index — fastest.
- * price_asc / price_desc: uses the min_price lateral subquery result.
- * Dynamically applies sorting by price or distance, using NULLS LAST for price and PostGIS KNN <-> operator for efficient nearest-first ordering.
- */
 
 export function buildOrderClause(
   sortBy: NearbyFilters["sortBy"],
@@ -95,7 +106,11 @@ export function buildOrderClause(
     return Prisma.sql`ORDER BY min_price ASC NULLS LAST`;
   if (sortBy === "price_desc")
     return Prisma.sql`ORDER BY min_price DESC NULLS LAST`;
-  // Default: distance - KNN <-> operator uses the GIST index
+
+  // FIX: COALESCE guards NULL location in KNN operator too
   return Prisma.sql`
-    ORDER BY p.location <-> ST_MakePoint(${lng}, ${lat})::geography ASC`;
+    ORDER BY COALESCE(
+      p.location,
+      ST_SetSRID(ST_MakePoint(p."longitude", p."latitude"), 4326)::geography
+    ) <-> ST_MakePoint(${lng}, ${lat})::geography ASC`;
 }

@@ -19,6 +19,12 @@ export const cartService = {
                   where: { status: "ACTIVE", expiresAt: { gt: new Date() } },
                   take: 1,
                 },
+                seller: {
+                  select: {
+                    storeName: true,
+                    city: true,
+                  },
+                },
               },
             },
             pickupWindow: true,
@@ -38,6 +44,12 @@ export const cartService = {
                   deals: {
                     where: { status: "ACTIVE", expiresAt: { gt: new Date() } },
                     take: 1,
+                  },
+                  seller: {
+                    select: {
+                      storeName: true,
+                      city: true,
+                    },
                   },
                 },
               },

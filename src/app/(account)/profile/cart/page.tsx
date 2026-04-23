@@ -20,7 +20,6 @@ import {
   AlertCircle,
 } from "lucide-react";
 import * as Dialog from "@radix-ui/react-dialog";
-import { X } from "lucide-react";
 import { api } from "@/lib/api";
 import { useLangStore } from "@/stores/langStore";
 import { Button } from "@/components/ui/Button";

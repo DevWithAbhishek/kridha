@@ -40,6 +40,7 @@ interface RzOptions {
 }
 interface RzInstance {
   open(): void;
+  on(event: string, handler: (response: any) => void): void;
 }
 declare global {
   interface Window {
@@ -97,13 +98,17 @@ function PayContent() {
       );
       return;
     }
+    if (!process.env.NEXT_PUBLIC_RAZORPAY_KEY_ID) {
+      setErrMsg("Razorpay key missing — check NEXT_PUBLIC_RAZORPAY_KEY_ID in .env");
+      return;
+    }
     setStatus("loading");
     setErrMsg("");
     try {
       const rzp = new window.Razorpay({
         key: process.env.NEXT_PUBLIC_RAZORPAY_KEY_ID ?? "",
         order_id: razorpayOrderId,
-        amount: advance * 100,
+        amount: Math.round(advance * 100), // ← uncomment + Math.round for float safety
         currency: "INR",
         name: "Kridha",
         description:
@@ -113,21 +118,22 @@ function PayContent() {
         image: "/images/kridha_logo_nav.png",
         theme: { color: "#2A9D8F" },
         handler: (response) => {
-          // Webhook on the server handles DB update (PENDING → CONFIRMED).
-          // We just navigate to the order page. No need to call our own verify endpoint here.
           setPaymentId(response.razorpay_payment_id);
           setStatus("success");
           setTimeout(() => router.push(`/orders/${orderId}`), 2000);
         },
         modal: {
-          ondismiss: () => {
-            setStatus("idle");
-          },
-          escape: false,
+          ondismiss: () => setStatus("idle"),
+          escape: true,
         },
       });
+      (rzp as any).on("payment.failed", (res: any) => {
+        console.error("Razorpay failure:", res);
+        setStatus("error");
+        setErrMsg(res.error?.description || "Payment failed");
+      });
       rzp.open();
-    } catch {
+    } catch(err) {
       setStatus("error");
       setErrMsg(
         lang === "hi" ? "Payment open नहीं हुआ" : "Could not open payment",

@@ -129,15 +129,14 @@ export default function BuyerOrdersPage() {
       return api
         .get(`/orders?${p}`)
         .then((r) => ({
-          orders: r.data.data.orders ?? [],
-          meta: r.data.data.meta ?? { total: 0, hasMore: false },
+          orders: r.data.data ?? [],
+          meta: r.data.meta ?? { total: 0, hasMore: false },
         }));
     },
     staleTime: 30_000,
     gcTime: 5 * 60_000,
     retry: 2,
   });
-
   const orders = [...(data?.orders ?? [])].sort((a, b) => {
     if (sortBy === "price_desc") return b.totalAmount - a.totalAmount;
     if (sortBy === "price_asc") return a.totalAmount - b.totalAmount;
@@ -248,7 +247,7 @@ export default function BuyerOrdersPage() {
         {orders.map((order) => (
           <Link
             key={order.id}
-            href={`/orders/${order.id}`}
+            href={`/profile/orders/${order.id}`}
             className="block group"
           >
             <div className="bg-[var(--color-surface)] dark:bg-surface-dark border border-border-DEFAULT dark:border-border-dark rounded-2xl p-4 hover:border-kridha-primary/50 hover:shadow-md transition-all">

@@ -31,7 +31,7 @@ import type { OrderStatus } from "@/types/dashboard";
 interface StatusHistoryEntry {
   fromStatus: string | null;
   toStatus: string;
-  timestamp: string;
+  createdAt: string;
   note: string | null;
 }
 interface SubOrderDetail {
@@ -164,7 +164,7 @@ function StatusTimeline({ history }: { history: StatusHistoryEntry[] }) {
                 )}
               </div>
               <span className="text-label-xs text-muted-DEFAULT dark:text-muted-dark flex-shrink-0">
-                {new Date(entry.timestamp).toLocaleString("en-IN", {
+                {new Date(entry.createdAt).toLocaleString("en-IN", {
                   day: "numeric",
                   month: "short",
                   hour: "2-digit",
@@ -533,7 +533,7 @@ export default function BuyerOrderDetailPage({
     isError,
   } = useQuery<SubOrderDetail>({
     queryKey: ["order-detail-buyer", id],
-    queryFn: () => api.get(`/orders/${id}`).then((r) => r.data.data.subOrder),
+    queryFn: () => api.get(`/orders/${id}`).then((r) => r.data.data),
     staleTime: 15_000,
     gcTime: 5 * 60_000,
     retry: 2,
@@ -569,7 +569,7 @@ export default function BuyerOrderDetailPage({
         <p className="text-h5 font-bold text-[var(--color-text)]">
           Order not found
         </p>
-        <Link href="/orders">
+        <Link href="/profile/orders">
           <Button variant="outline">← Back to Orders</Button>
         </Link>
       </div>
@@ -579,7 +579,7 @@ export default function BuyerOrderDetailPage({
     <div className="max-w-3xl mx-auto px-4 sm:px-6 py-6 space-y-5">
       {/* Back */}
       <Link
-        href="/orders"
+        href="/profile/orders"
         className="inline-flex items-center gap-2 text-label-sm text-muted-DEFAULT dark:text-muted-dark hover:text-kridha-primary transition-colors"
       >
         <ArrowLeft className="w-4 h-4" />

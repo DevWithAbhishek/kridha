@@ -11,7 +11,7 @@
 | Environment | URL |
 |-------------|-----|
 | Local | `http://localhost:3000` |
-| Production | `https://kridha.vercel.app` |
+| Production | `https://kridha-marketplace.vercel.app/` |
 
 ---
 

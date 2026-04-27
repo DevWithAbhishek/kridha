@@ -44,21 +44,6 @@ export function Navbar() {
               className="hidden md:block"
             />
           </Link>
-          <nav className="hidden md:flex gap-6">
-            {navLinks.map((link) => (
-              <Link
-                key={link.href}
-                href={link.href}
-                className={`text-label-md transition-colors ${
-                  isActive(link.href)
-                    ? "text-kridha-primary font-semibold"
-                    : "text-[var(--color-text-muted)] hover:text-kridha-primary"
-                }`}
-              >
-                {link.label}
-              </Link>
-            ))}
-          </nav>
         </div>
         <div className="hidden md:flex items-center gap-3">
           <LanguageToggle />

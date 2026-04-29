@@ -264,3 +264,210 @@ Assign explicit, non-overlapping responsibility:
 
 ## 📚 Learning
 Overlapping redirect logic across layers is one of the most common sources of auth instability. Each layer should own a distinct concern with no fallback from another layer compensating for it. When adding a new auth check, first identify which layer owns that responsibility — don't add it to all three "just in case."
+
+---
+
+## 🐞 Problem
+Raw SQL query failing — `relation "product" does not exist`
+
+## 🔍 Why it happened
+PostgreSQL is case-sensitive when identifiers are quoted. Prisma creates tables with quoted PascalCase names (`"Product"`), but raw SQL was written as:
+```sql
+SELECT * FROM product;
+```
+`product` (unquoted) is treated as a lowercase identifier — Postgres can't find it.
+
+## ✅ Final Solution
+```sql
+SELECT * FROM "Product";
+```
+
+## 📚 Learning
+Prisma schema model names map to quoted PascalCase table names in PostgreSQL. Unquoted identifiers are folded to lowercase by the SQL parser. Whenever writing `$queryRaw` or `$executeRaw`, always double-quote the table name using the exact Prisma model name. Never assume the table name from the query — inspect the actual DB schema first.
+
+---
+
+## 🐞 Problem
+Razorpay frontend SDK crash — `.on()` not a function
+
+## 🔍 Why it happened
+Razorpay's browser SDK was used like a Node.js EventEmitter:
+```js
+rzpInstance.on('payment.success', handler)
+```
+The browser SDK does not expose `.on()`. It is callback-driven via the options object.
+
+## ✅ Final Solution
+```js
+const rzp = new Razorpay({
+  ...options,
+  handler: function(response) { /* success */ }
+});
+rzp.open();
+```
+
+## 📚 Learning
+Browser SDKs and Node SDKs for the same service often have completely different APIs. Razorpay's browser SDK is not an EventEmitter — it takes a `handler` callback in the options object. Never assume patterns from the server SDK carry over to the client. Always read the browser-specific integration docs separately.
+
+---
+
+## 🐞 Problem
+CSP blocking payment gateway (Razorpay)
+
+## 🔍 Why it happened
+`checkout.razorpay.com` was not whitelisted in `script-src` or `connect-src`.
+
+## ✅ Final Solution
+```
+script-src 'self' checkout.razorpay.com
+connect-src 'self' api.razorpay.com
+```
+
+## 📚 Learning
+Payment gateways load external scripts and make cross-origin API calls — both blocked by CSP if not explicitly whitelisted. The failure is silent (browser blocks, no visible error in UI). Add payment gateway domains to CSP at integration time, not after debugging a production failure. This compounds the earlier CSP lesson: every new external service requires a CSP audit.
+
+---
+
+## 🐞 Problem
+Prisma migration failing with P3006 — shadow DB replay error
+
+## 🔍 Why it happened
+Migration contained:
+```sql
+DROP INDEX "product_location_gist";
+```
+The shadow DB (used by Prisma to replay migrations from scratch) never had this index created, so the drop failed during replay.
+
+## ✅ Final Solution
+```sql
+DROP INDEX IF EXISTS "product_location_gist";
+```
+
+## 📚 Learning
+Prisma replays all migrations in sequence on a clean shadow DB during `migrate dev`. Any migration that assumes pre-existing state (an index, a column, an extension) will fail on replay if that state wasn't created in a prior migration in the same sequence. All destructive DDL (`DROP INDEX`, `DROP COLUMN`, `ALTER TABLE`) must use `IF EXISTS`. Migrations must be idempotent and environment-independent.
+
+---
+
+## 🐞 Problem
+Migration failing — cannot add `NOT NULL` column to non-empty table
+
+## 🔍 Why it happened
+```sql
+ALTER TABLE "User" ADD COLUMN pinHash TEXT NOT NULL;
+```
+Existing rows have no value for `pinHash`, violating the `NOT NULL` constraint immediately.
+
+## ✅ Final Solution
+Split into a multi-step migration:
+1. Add column as nullable: `ADD COLUMN pinHash TEXT`
+2. Backfill existing rows: `UPDATE "User" SET pinHash = '...'`
+3. Apply constraint: `ALTER COLUMN pinHash SET NOT NULL`
+4. Drop old column if replacing one
+
+## 📚 Learning
+`NOT NULL` columns cannot be added to tables with existing rows unless a `DEFAULT` is provided or the column is backfilled first. This is a standard zero-downtime migration pattern. Any schema change that introduces a new constraint must account for existing data — schema changes and data migrations are separate concerns that must be sequenced correctly.
+
+---
+
+## 🐞 Problem
+Prisma migration checksum mismatch error
+
+## 🔍 Why it happened
+An already-applied migration file was edited after the fact. Prisma stores a SHA-256 checksum of each migration in `_prisma_migrations`. Editing the file breaks the checksum.
+
+## ✅ Final Solution
+Restore the original migration file. If the fix must be applied, create a new migration for the change. As a last resort in dev, update the checksum in `_prisma_migrations` manually.
+
+## 📚 Learning
+Applied migrations are immutable. Prisma's checksum mechanism enforces this — it's a safeguard, not an obstacle. The correct fix for a broken migration is always a new forward migration, never editing history. Treat migration files the same way you treat git history: rewriting it creates downstream divergence.
+
+---
+
+## 🐞 Problem
+Migration order dependency — `ALTER TABLE` ran before the table was created
+
+## 🔍 Why it happened
+A PostGIS extension migration ran before the base schema migration that created the `Product` table. The `ALTER TABLE` in the PostGIS migration referenced a table that didn't yet exist.
+
+## ✅ Final Solution
+Ensure migration sequence follows dependency order:
+1. Base schema (model tables)
+2. Extensions and custom types
+3. Dependent changes (indexes, PostGIS columns, constraints)
+
+## 📚 Learning
+Prisma runs migrations in filename order (timestamp-prefixed). Migration ordering is a design constraint — dependencies between migrations must be reflected in their sequence. When adding PostGIS, geospatial indexes, or any feature that modifies existing tables, the base table must already exist in a prior migration.
+
+---
+
+## 🐞 Problem
+Cart allowed duplicate items — same product + window + date inserted multiple times
+
+## 🔍 Why it happened
+Cart writes used `create()` with no uniqueness enforcement. Concurrent or repeated requests created duplicate rows, producing incorrect totals and race condition exposure.
+
+## ✅ Final Solution
+Enforce business invariant at the DB level:
+```prisma
+@@unique([cartSessionId, productId, pickupWindowId, pickupDate])
+```
+Use `upsert()` instead of `create()` for all cart writes.
+
+## 📚 Learning
+Business invariants (e.g. "one cart entry per product per pickup slot") must be enforced at the database layer, not just application logic. Application-level checks are vulnerable to race conditions under concurrent requests. `@@unique` constraints + `upsert()` is the correct pattern: the DB rejects violations atomically, and `upsert` makes writes idempotent by default.
+
+---
+
+## 🐞 Problem
+Partial state after multi-step write — cart expiry updated but item not created
+
+## 🔍 Why it happened
+Multiple Prisma writes executed sequentially without a transaction. A failure mid-sequence left the DB in a partially updated state.
+
+## ✅ Final Solution
+```js
+await prisma.$transaction([
+  prisma.cartItem.upsert(...),
+  prisma.cartSession.update(...)
+]);
+```
+
+## 📚 Learning
+Any operation that requires multiple writes to remain consistent must be wrapped in a transaction. Prisma's `$transaction()` makes this explicit. "It works in practice" is not a substitute for atomicity — partial writes cause silent data corruption that surfaces as hard-to-reproduce bugs. Treat every multi-write operation as a transaction by default.
+
+---
+
+## 🐞 Problem
+Date comparison bug — past dates passing validation
+
+## 🔍 Why it happened
+```js
+date > new Date()
+```
+`new Date()` includes the current time (hours, minutes, seconds, milliseconds). A date set to today's date at midnight would fail this check even though the day is valid.
+
+## ✅ Final Solution
+```js
+const today = new Date();
+today.setHours(0, 0, 0, 0);
+if (date < today) throw error;
+```
+
+## 📚 Learning
+JavaScript `Date` objects carry time components. Comparisons between dates that should be day-granularity will behave unexpectedly if time isn't normalized. Always strip time (`setHours(0,0,0,0)`) before comparing calendar dates. This applies everywhere: pickup dates, expiry dates, scheduling logic, any date-only business rule.
+
+---
+
+## 🐞 Problem
+Zod schema and service layer performing overlapping validation
+
+## 🔍 Why it happened
+The same business rule was validated in both the Zod schema (at the request boundary) and inside the service function. When the rule changed, only one location was updated, causing inconsistency.
+
+## ✅ Final Solution
+Enforce strict layer separation:
+- **Zod** → input shape and format validation (types, lengths, required fields)
+- **Service layer** → business rules (availability, ownership, state machine transitions)
+
+## 📚 Learning
+Zod and service-layer validation answer different questions. Zod asks: "Is this input well-formed?" The service asks: "Is this operation permitted given current business state?" Mixing them creates duplication and divergence. Business rules that depend on DB state or domain logic don't belong in schemas — schemas don't have access to that context.

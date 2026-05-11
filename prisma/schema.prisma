@@ -1,8 +1,3 @@
-// This is your Prisma schema file,
-// learn more about it in the docs: https://pris.ly/d/prisma-schema
-
-// Get a free hosted Postgres database in seconds: `npx create-db`
-
 generator client {
   provider = "prisma-client-js"
 }
@@ -143,8 +138,8 @@ enum RefundStatus {
 
 model User {
   id             String    @id @default(cuid())
-  phone          String    @unique // normalised: +91XXXXXXXXXX
-  pin            String // argon2 hash of 4-digit PIN
+  phone          String    @unique
+  pinHash        String
   pinAttempts    Int       @default(0)
   pinLockedUntil DateTime?
 
@@ -265,14 +260,14 @@ model OtpRequest {
 }
 
 enum AdminRole {
-  REVIEWER    // can verify/reject sellers
+  REVIEWER // can verify/reject sellers
   SUPER_ADMIN // can also suspend, create admins, see unmasked bank details
 }
 
 model AdminUser {
   id           String    @id @default(cuid())
   email        String    @unique
-  passwordHash String    // bcrypt — NOT argon2 (faster is fine here, login rate-limited hard)
+  passwordHash String // bcrypt — NOT argon2 (faster is fine here, login rate-limited hard)
   name         String
   role         AdminRole @default(REVIEWER)
   lastLoginAt  DateTime?
@@ -286,15 +281,15 @@ model AdminUser {
 
 // Every admin action is logged. Immutable — no update/delete.
 model AdminAuditLog {
-  id          String    @id @default(cuid())
-  adminId     String
-  admin       AdminUser @relation(fields: [adminId], references: [id])
-  action      String    // e.g. "VERIFY_SELLER", "REJECT_SELLER", "SUSPEND_SELLER"
-  targetType  String    // e.g. "SellerProfile"
-  targetId    String    // e.g. seller userId
-  note        String?   // optional reason / comment
-  metadata    Json?     // previous state snapshot for auditing
-  createdAt   DateTime  @default(now())
+  id         String    @id @default(cuid())
+  adminId    String
+  admin      AdminUser @relation(fields: [adminId], references: [id])
+  action     String // e.g. "VERIFY_SELLER", "REJECT_SELLER", "SUSPEND_SELLER"
+  targetType String // e.g. "SellerProfile"
+  targetId   String // e.g. seller userId
+  note       String? // optional reason / comment
+  metadata   Json? // previous state snapshot for auditing
+  createdAt  DateTime  @default(now())
 
   @@index([adminId])
   @@index([targetId])
@@ -338,7 +333,7 @@ model Product {
   latitude  Float
   longitude Float
   city      String
-  location Unsupported("geography(Point, 4326)")?
+  location  Unsupported("geography(Point, 4326)")?
 
   // Lifecycle
   productStatus ProductStatus @default(ACTIVE)
@@ -515,6 +510,7 @@ model CartItem {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
+  @@unique([cartSessionId, productId, pickupWindowId, pickupDate])
   @@index([cartSessionId])
 }
 

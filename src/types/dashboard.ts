@@ -78,6 +78,16 @@ export type RefundStatus = "INITIATED" | "PROCESSED" | "FAILED";
 
 export type Day = "MON" | "TUE" | "WED" | "THU" | "FRI" | "SAT" | "SUN";
 
+export const DAYS_MAP: Record<number, { en: string; hi: string }> = {
+  1: { en: "Mon", hi: "सोम" },
+  2: { en: "Tue", hi: "मंगल" },
+  3: { en: "Wed", hi: "बुध" },
+  4: { en: "Thu", hi: "गुरु" },
+  5: { en: "Fri", hi: "शुक्र" },
+  6: { en: "Sat", hi: "शनि" },
+  7: { en: "Sun", hi: "रवि" },
+};
+
 // ─────────────────────────────────────────────────────────────
 // CORE MODELS
 // ─────────────────────────────────────────────────────────────

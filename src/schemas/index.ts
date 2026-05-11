@@ -422,14 +422,25 @@ export const AddToSavedProductsSchema = z.object({
 export const AddItemToCartSchema = z
   .object({
     productId: z.cuid(),
-    quantity: z.number().positive(),
+    quantity: z.number().int().positive(),
     pickupWindowId: z.cuid(),
-    pickupDate: z.coerce.date(),
+    pickupDate: z.coerce
+      .date()
+      .refine((d) => !isNaN(d.getTime()), "Invalid date"),
   })
-  .refine((data) => data.pickupDate > new Date(), {
-    message: "Pickup date must be in the future",
-    path: ["pickupDate"],
-  });
+  .refine(
+    (data) => {
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+      const pickup = new Date(data.pickupDate);
+      pickup.setHours(0, 0, 0, 0);
+      return pickup > today;
+    },
+    {
+      message: "Pickup date must be in the future",
+      path: ["pickupDate"],
+    },
+  );
 
 export const UpdateCartItemSchema = z.object({
   quantity: z.number().positive(),

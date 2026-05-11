@@ -471,3 +471,91 @@ Enforce strict layer separation:
 
 ## 📚 Learning
 Zod and service-layer validation answer different questions. Zod asks: "Is this input well-formed?" The service asks: "Is this operation permitted given current business state?" Mixing them creates duplication and divergence. Business rules that depend on DB state or domain logic don't belong in schemas — schemas don't have access to that context.
+
+---
+
+## 🐞 Problem
+Migration marked as applied in `_prisma_migrations` but DDL never executed on real DB
+
+## 🔍 Why it happened
+The checksum update trick (`UPDATE "_prisma_migrations" SET finished_at = NOW()...`) only writes to Prisma's metadata table. It tells Prisma "this migration is done" but does not execute the actual SQL (`ALTER TABLE`, `CREATE INDEX`, etc.) against the real database. The two operations are completely independent.
+
+## ✅ Final Solution
+After faking a migration as applied, manually execute the DDL directly:
+```cmd
+npx prisma db execute --file prisma\migrations\<timestamp>_migration_name\migration.sql
+```
+Or pipe individual statements:
+```cmd
+echo ALTER TABLE "User" RENAME COLUMN "pin" TO "pinHash"; | npx prisma db execute --stdin
+```
+
+## 📚 Learning
+`_prisma_migrations` is a bookkeeping table — writing to it has zero effect on the actual schema. Any time you bypass `migrate dev` (via checksum updates, `--applied` flags, or direct `_prisma_migrations` edits), you must separately ensure the DDL was actually applied. Always verify with a known-good query or app behaviour test, not just `prisma migrate status`.
+
+---
+
+## 🐞 Problem
+`prisma db execute` shows "Script executed successfully" for SELECT queries but never outputs rows
+
+## 🔍 Why it happened
+`prisma db execute` is a script runner, not a SQL client. It executes SQL and reports success or failure. It does not render query result sets. SELECT queries run, return data to the driver, and the driver discards it.
+
+## ✅ Final Solution
+Use Neon's built-in SQL editor for inspection queries, or infer column existence from app behaviour (if the app works, the column exists).
+
+## 📚 Learning
+`prisma db execute` is for applying DDL/DML, not inspecting data. Never use it to verify schema state — its output cannot confirm whether a column or index exists. Use the DB console, `psql`, or TablePlus for inspection. Alternatively, attempt the operation and treat the error message itself as the verification signal (e.g. `column already exists` confirms presence).
+
+---
+
+## 🐞 Problem
+
+`DO $$` block silently skipped `ADD COLUMN` — `pinHash` not created despite "Script executed successfully"
+
+## 🔍 Why it happened
+The `IF NOT EXISTS` check inside the DO block queried `information_schema.columns` with `table_name = 'User'`. PostgreSQL's `information_schema` stores table names in their exact created case. The check appeared to match but the conditional evaluated unexpectedly, causing the `ALTER TABLE ADD COLUMN` branch to be silently skipped with no error.
+
+## ✅ Final Solution
+Bypass the DO block entirely and run the DDL directly:
+```cmd
+echo ALTER TABLE "User" ADD COLUMN "pinHash" TEXT NOT NULL DEFAULT ''; | npx prisma db execute --stdin
+```
+
+## 📚 Learning
+`DO $$` blocks swallow internal errors and produce no output — a failed or skipped branch inside a PL/pgSQL block is invisible to the caller. Never use anonymous DO blocks for critical schema changes when you need confirmation of execution. Prefer direct, unconditional DDL with `IF NOT EXISTS` / `IF EXISTS` guards at the statement level, not inside procedural logic.
+
+---
+
+## 🐞 Problem
+Neon DB unreachable — P1001 `Can't reach database server`
+
+## 🔍 Why it happened
+Neon free tier enforces a monthly compute hour limit. Once exhausted, the compute instance is suspended and all connections are refused until the quota resets or the plan is upgraded.
+
+## ✅ Final Solution
+Three options in order of speed:
+1. Upgrade Neon plan (instant)
+2. Migrate to a different free-tier Postgres (Supabase / Railway) and run `npx prisma migrate deploy`
+3. Wait for monthly quota reset
+
+## 📚 Learning
+Serverless database free tiers have hard compute caps, not just storage caps. P1001 during active development almost always means the instance is suspended, not a network or credentials issue. Design dev workflows to be resilient to DB unavailability: keep migration files idempotent so `migrate deploy` can replay cleanly on a fresh instance at any time.
+
+---
+
+## 🐞 Problem
+Stale Prisma client causing `column User.pinHash does not exist` despite column being present in DB
+
+## 🔍 Why it happened
+`npx prisma generate` had been run previously but the Next.js `.next` build cache retained compiled chunks referencing the old client. Turbopack served the cached module without recompiling.
+
+## ✅ Final Solution
+```cmd
+npx prisma generate
+rmdir /s /q .next
+npm run dev
+```
+
+## 📚 Learning
+`prisma generate` updates the client in `node_modules` but does not invalidate the Next.js build cache. If a Prisma schema change is not reflected in app behaviour despite `generate` running, the `.next` cache is serving stale compiled output. Always delete `.next` after any Prisma schema or client change during active development.

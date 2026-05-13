@@ -1,7 +1,31 @@
 import { PrismaClient } from "@prisma/client";
 import { PrismaNeon } from "@prisma/adapter-neon";
-const adapter = new PrismaNeon({ connectionString: process.env.DATABASE_URL });
-export const prisma = new PrismaClient({ adapter });
+
+const isNeon = process.env.DATABASE_URL?.includes('neon.tech') ?? false;
+
+async function buildPrismaClient() {
+  if (isNeon) {
+    // Production: Neon needs WebSocket adapter
+    const { PrismaNeon } = await import("@prisma/adapter-neon");
+    const { neonConfig } = await import("@neondatabase/serverless");
+    const { WebSocket } = await import("ws");
+    neonConfig.webSocketConstructor = WebSocket;
+    const adapter = new PrismaNeon({
+      connectionString: process.env.DATABASE_URL!,
+    });
+    return new PrismaClient({ adapter });
+  }
+  // Development: plain Prisma, standard TCP to Docker PostgreSQL
+  return new PrismaClient();
+}
+
+// Singleton — prevents new connections on every hot reload in dev
+const globalForPrisma = globalThis as unknown as { prisma: PrismaClient };
+export const prisma = globalForPrisma.prisma ?? await buildPrismaClient();
+
+if (process.env.NODE_ENV !== "production") {
+  globalForPrisma.prisma = prisma;
+}
 
 // Retry wrapper for Neon cold-start P1001 errors
 // Neon wakes in 1-4s — 4 retries with backoff covers it

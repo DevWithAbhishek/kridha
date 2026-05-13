@@ -4,15 +4,21 @@
 
 import pino from "pino";
 
-export const logger = pino({
-  level: process.env.NODE_ENV === "production" ? "info" : "debug",
+const isDev = process.env.NODE_ENV !== "production";
 
-  ...(process.env.NODE_ENV !== "production" && {
+export const logger = pino({
+  level: isDev ? "debug" : "info",
+  ...(isDev && {
     transport: {
       target: "pino-pretty",
-      options: { colorize: true, translateTime: "SYS:standard" },
+      options: {
+        colorize: true,
+        translateTime: "SYS:HH:MM:ss",
+        ignore: "pid,hostname",
+      },
     },
   }),
+  base: { service: "kridha-api" },
 
   // Fields redacted before writing — never appear in any log output
   redact: {
@@ -37,6 +43,4 @@ export const logger = pino({
     ],
     censor: "[REDACTED]",
   },
-
-  base: { service: "kridha-api" },
 });

@@ -2,12 +2,14 @@ import { NextResponse } from "next/server";
 import { ZodError } from "zod";
 import { AppError } from "./errors";
 import { logger } from "./logger";
+import * as Sentry from "@sentry/nextjs";
 
 export function handleError(err: unknown): NextResponse {
   // Known application error — return its shape directly
   if (err instanceof AppError) {
     // 5xx AppErrors are unexpected — log them
     if (err.statusCode >= 500) {
+      Sentry.captureException(err); 
       logger.error({ code: err.code, err }, "AppError 5xx — unexpected");
     }
     return NextResponse.json(
@@ -21,6 +23,7 @@ export function handleError(err: unknown): NextResponse {
     );
   }
 
+  Sentry.captureException(err); 
   // Zod validation error — convert to 422 VALIDATION_FAILED
   // err.issues in Zod v4, not err.errors
   if (err instanceof ZodError) {

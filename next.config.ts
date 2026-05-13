@@ -44,6 +44,7 @@ const nextConfig: NextConfig = {
   experimental: {
     cpus: 1, // Limits build to 1 CPU core (prevents OOM/hang on Hobby)
     optimizeCss: true,
+    serverSourceMaps: true,
   },
   async headers() {
     return [{ source: "/:path*", headers: securityHeaders }];

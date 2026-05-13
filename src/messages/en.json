@@ -115,7 +115,8 @@
     "INVALID_EXPIRY_TIME": "Expiry time must be in the future.",
     "NOTIFICATION_NOT_FOUND": "Notification not found.",
     "SUBORDER_NOT_FOUND": "Sub-order not found.",
-    "NETWORK_ERROR": "Network error. Please retry."
+    "NETWORK_ERROR": "Network error. Please retry.",
+    "SIGNUP_LOGIN_PROMPT": "Account created! Please log in."
   },
   "common": {
     "loading": "Loading",

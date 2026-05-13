@@ -1,0 +1,18 @@
+owner: DevWithAbhishek
+repo: kridha-status
+
+sites:
+  - name: Kridha API
+    url: https://kridha-marketplace.vercel.app/api/health
+    expectedStatus: 200
+
+  - name: Kridha Product Feed
+    url: https://kridha-marketplace.vercel.app/api/products?lat=25.4358&lng=81.8463&radius=10
+    expectedStatus: 200
+
+notifications:
+  - type: email
+    to: abhishek@codewithabhishek.com
+
+status-website:
+  name: Kridha Status

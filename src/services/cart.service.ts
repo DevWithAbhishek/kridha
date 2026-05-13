@@ -88,7 +88,6 @@ export const cartService = {
     const pickupDate = new Date(input.pickupDate);
     const dayOfWeek = pickupDate.getDay() === 0 ? 7 : pickupDate.getDay(); //Sun = 7
     if (!window.daysActive.includes(dayOfWeek)) throw ERR.INVALID_PICKUP_DATE;
-    if (pickupDate < new Date()) throw ERR.INVALID_PICKUP_DATE;
 
     // Stock check (advisory — hard check at order creation with SELECT FOR UPDATE)
     if (product.available < input.quantity) {
@@ -102,24 +101,35 @@ export const cartService = {
 
     const unitPrice = calcUnitPrice(input.quantity, product.priceTiers);
 
-    const cart = await this.getOrCreate(userId);
-    // Extend cart expiry on activity
-    await prisma.cartSession.update({
-      where: { id: cart.id },
-      data: { expiresAt: new Date(Date.now() + 30 * 60_000) },
-    });
-
-    // Add or update cart item
-    return prisma.cartItem.create({
-      data: {
-        cartSessionId: cart.id,
-        productId: input.productId,
-        quantity: input.quantity,
-        unitPrice,
-        subTotal: parseFloat((unitPrice * input.quantity).toFixed(2)),
-        pickupWindowId: input.pickupWindowId,
-        pickupDate,
-      },
+    return prisma.$transaction(async (tx) => {
+      const cart = await this.getOrCreate(userId); // ⚠️ ideally also tx version
+      await tx.cartSession.update({
+        where: { id: cart.id },
+        data: { expiresAt: new Date(Date.now() + 30 * 60_000) },
+      });
+      return await tx.cartItem.upsert({
+        where: {
+          cartSessionId_productId_pickupWindowId_pickupDate: {
+            cartSessionId: cart.id,
+            productId: input.productId,
+            pickupWindowId: input.pickupWindowId,
+            pickupDate,
+          },
+        },
+        update: {
+          quantity: { increment: input.quantity },
+          subTotal: { increment: unitPrice * input.quantity },
+        },
+        create: {
+          cartSessionId: cart.id,
+          productId: input.productId,
+          quantity: input.quantity,
+          unitPrice,
+          subTotal: unitPrice * input.quantity,
+          pickupWindowId: input.pickupWindowId,
+          pickupDate,
+        },
+      });
     });
   },
 

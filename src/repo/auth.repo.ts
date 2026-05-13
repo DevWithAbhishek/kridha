@@ -43,7 +43,7 @@ export const authRepo = {
     await prisma.user.create({
       data: {
         phone,
-        pin: pinHash,
+        pinHash,
         name,
       },
     });

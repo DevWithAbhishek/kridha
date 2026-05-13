@@ -78,7 +78,7 @@ export const LoginSchema = z.object({
     .string()
     .min(1, "PIN_REQUIRED")
     .length(4, "PIN_LENGTH")
-    .regex(/^[0-9]{4}$/, "PIN_LENGTH"),
+    .regex(/^[0-9]{4}$/, "PIN_INVALID"),
 });
 
 export const RefreshTokenSchema = z.object({

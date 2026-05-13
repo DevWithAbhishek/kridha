@@ -6,32 +6,13 @@ import {
   type NearbyFilters,
 } from "@/lib/postgis";
 import type { GetProductsInput, GetSellerProductsInput } from "@/schemas";
+import { Product } from "@prisma/client";
+import { PriceTier } from "@/types/dashboard";
 
 // ---------------------------------------------------------------------------
 // Typed result of the raw PostGIS query
 // ---------------------------------------------------------------------------
-export interface ProductRow {
-  id: string;
-  nameEn: string;
-  nameHi: string | null;
-  description: string | null;
-  category: string;
-  sellerId: string;
-  isBranded: boolean;
-  unit: string;
-  unitIncrement: number;
-  minOrderQuantity: number;
-  maxOrderQuantity: number | null;
-  available: number;
-  imageUrls: string[];
-  blurHash: string | null;
-  latitude: number;
-  longitude: number;
-  city: string;
-  productStatus: string;
-  deletedAt: Date | null;
-  createdAt: Date;
-  updatedAt: Date;
+export interface ProductRow extends Product {
   // computed by PostGIS
   distance_km: number;
   // computed by lateral subquery
@@ -39,11 +20,7 @@ export interface ProductRow {
 }
 
 export interface ProductWithRelations extends ProductRow {
-  priceTiers: Array<{
-    minQty: number;
-    maxQty: number | null;
-    pricePerUnit: number;
-  }>;
+  priceTiers: Array<PriceTier>;
   dealDiscountPercent: number | null;
   dealExpiresAt: Date | null;
   seller?: {
@@ -265,20 +242,75 @@ export const productRepo = {
   },
 
   async findById(id: string): Promise<ProductWithRelations | null> {
-    const rows = await prisma.$queryRaw<ProductRow[]>(Prisma.sql`
-      SELECT p.*, 0 AS distance_km, NULL::numeric AS min_price
-      FROM "Product" p
-      WHERE p.id = ${id}
-        AND p."productStatus" = 'ACTIVE'
-        AND p."deletedAt" IS NULL
-      LIMIT 1
-    `);
-    if (!rows.length) return null;
-    const [product] = await attachRelations(rows, {
-      includeSeller: true,
-      includePickupWindows: true,
+    const product = await prisma.product.findFirst({
+      where: {
+        id,
+        productStatus: "ACTIVE",
+        deletedAt: null,
+      },
+      include: {
+        priceTiers: {
+          select: {
+            id: true,
+            productId: true,
+            minQty: true,
+            maxQty: true,
+            pricePerUnit: true,
+          },
+        },
+        deals: {
+          where: {
+            status: "ACTIVE",
+            expiresAt: { gt: new Date() },
+          },
+          orderBy: {
+            expiresAt: "asc",
+          },
+          take: 1,
+        },
+        seller: {
+          select: {
+            userId: true,
+            storeName: true,
+            sellerRating: true,
+            reliabilityScore: true,
+            user: { select: { id: true, name: true } },
+            pickupWindows: {
+              // ← nested inside seller
+              where: { deletedAt: null },
+            },
+          },
+        },
+      },
     });
-    return product ?? null;
+
+    if (!product) return null;
+    const activeDeal = product.deals[0] ?? null;
+
+    return {
+      ...product,
+      distance_km: 0,
+      min_price: null,
+      dealDiscountPercent: activeDeal?.discountPercent ?? null,
+      dealExpiresAt: activeDeal?.expiresAt ?? null,
+      seller: product.seller
+        ? {
+            id: product.seller.user.id,
+            name: product.seller.user.name,
+            storeName: product.seller.storeName,
+            reliabilityScore: product.seller.reliabilityScore,
+            sellerRating: product.seller.sellerRating,
+          }
+        : undefined,
+      pickupWindows: product.seller?.pickupWindows?.map((w) => ({
+        id: w.id,
+        labelEn: w.labelEn,
+        labelHi: w.labelHi,
+        startTime: w.startTime,
+        endTime: w.endTime,
+        daysActive: w.daysActive,
+      })),
+    };
   },
 
   async findBySeller(sellerId: string, input: GetSellerProductsInput) {

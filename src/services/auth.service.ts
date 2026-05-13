@@ -36,11 +36,11 @@ export const authService = {
   async login(input: LoginInput) {
     const user = await authRepo.findUserByPhone(input.phone);
     // Same error for wrong phone and wrong PIN — prevents enumeration
-    if (!user || !user.pin) throw ERR.INVALID_CREDENTIALS;
+    if (!user) throw ERR.INVALID_CREDENTIALS;
     if (user.pinLockedUntil && user.pinLockedUntil > new Date())
       throw ERR.PIN_LOCKED;
 
-    const valid = await verifyByArgon(user.pin, input.pin);
+    const valid = await verifyByArgon(user.pinHash, input.pin);
     if (!valid) {
       const attempts = user.pinAttempts + 1;
       const lockUntil =

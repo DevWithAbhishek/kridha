@@ -172,7 +172,7 @@ model User {
   cartSessions  CartSession[]
   buyerOrders   Order[]        @relation("BuyerOrders")
   reviews       Review[]
-  refreshTokens RefreshToken[]
+  userSessions userSession[]
   notifications Notification[]
 
   @@index([phone])
@@ -757,19 +757,22 @@ model WebhookLog {
 // all tokens in the same family (all sessions for that user).
 // ─────────────────────────────────────────────────────────────────────────────
 
-model RefreshToken {
+model userSession {
   id String @id @default(cuid())
-
   userId String
   user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   tokenHash  String  @unique // sha256(rawToken) — never store plain token
   family     String // UUID — shared across rotations of same session
+
   deviceInfo String?
+  ipAddress String? // IP at token creation - for hijack detection
+  userAgent String? // UA at creation - for "My Sessions" display
+  lastSeenIp String? // Updated on each refresh - mismatch = possible hijack
+  lastSeenAt DateTime? // Last refresh time
 
   expiresAt DateTime
   revoked   Boolean  @default(false)
-
   createdAt DateTime @default(now())
   // No updatedAt — token is immutable after creation; revoke by setting revoked=true
 

@@ -17,8 +17,6 @@
   },
   "dependencies": {
     "@hookform/resolvers": "^5.2.2",
-    "@neondatabase/serverless": "^1.0.2",
-    "@prisma/adapter-neon": "^7.6.0",
     "@prisma/client": "^7.5.0",
     "@radix-ui/react-accordion": "^1.2.12",
     "@radix-ui/react-dialog": "^1.1.15",

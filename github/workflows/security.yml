@@ -1,0 +1,14 @@
+name: Security Tests
+on: [push, pull_request]
+jobs: 
+  access-control: 
+    runs-on: ubuntu-latest
+    steps: 
+      - uses: actions/checkout@v4
+      - run: npm install
+      - run: docker-compose up -d
+      - run: npx prisma migrate deploy
+      - run: npx prisma db seed
+      - run: npm run dev &
+      - run: sleep 5
+      - run: npx jest tests/security/access-control.test.ts

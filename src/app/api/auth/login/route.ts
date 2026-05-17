@@ -3,13 +3,17 @@ import { handleError } from "@/lib/handleError";
 import { LoginSchema } from "@/schemas";
 import { authService } from "@/services/auth.service";
 import { setAuthCookies } from "@/lib/cookies";
-import { withRetry } from "@/lib/db";
+import { withLogger } from "@/lib/logger-middleware";
 
-export async function POST(req: NextRequest) {
+export const POST = withLogger(async (req: NextRequest) =>  {
   try {
     const body = LoginSchema.parse(await req.json());
+    const ip = req.headers.get("x-real-ip")
+      ?? req.headers.get("x-forwarded-for")?.split(",")[0].trim()
+      ?? "unknown";
+    const ua = req.headers.get("user-agent") ?? "";
     // Wrap only the DB-touching service call
-    const result = await withRetry(() => authService.login(body));
+    const result = await authService.login(body, ip, ua);
     const res = NextResponse.json({
       success: true,
       data: { user: result.user },
@@ -19,4 +23,4 @@ export async function POST(req: NextRequest) {
   } catch (err) {
     return handleError(err);
   }
-}
+}, "auth.login")

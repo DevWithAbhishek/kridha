@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import jwt from "jsonwebtoken";
+import jwt, { JwtPayload } from "jsonwebtoken";
 
 export async function GET(req: NextRequest) {
   try {
@@ -7,10 +7,9 @@ export async function GET(req: NextRequest) {
     if (!token) {
       return NextResponse.json({ success: true, data: null });
     }
-    const payload = jwt.verify(token, process.env.JWT_SECRET!) as {
-      userId: string;
-      roles: string[];
-    };
+    const payload = jwt.verify(token, process.env.JWT_SECRET!, {
+      algorithms: ["HS256"],
+    }) as JwtPayload;
 
     return NextResponse.json({
       success: true,

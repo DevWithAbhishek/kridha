@@ -56,7 +56,11 @@ export default function AuthPage() {
                 setFormError(tError('INVALID_CREDENTIALS'));
             } else if (status === 429 || code === 'PIN_LOCKED' || code === 'RATE_LIMITED') {
                 setFormError(tError('PIN_LOCKED'));
-            } else {
+            } else if (code === 'PIN_INVALID') {
+                setFormError(tError('PIN_INVALID'));
+            }
+            
+            else {
                 setFormError(tError('INTERNAL_ERROR'));
             }
         } finally {

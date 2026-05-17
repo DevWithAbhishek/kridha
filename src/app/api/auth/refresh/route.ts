@@ -10,9 +10,14 @@ export async function POST(req: NextRequest) {
   try {
     const raw = req.cookies.get("kridha_refresh")?.value;
     if (!raw) throw ERR.REFRESH_TOKEN_INVALID;
-    const { lang, accessToken, refreshToken } = await tokenService.rotate(raw); // Read preferred lang for the new token's user
+    const ip =
+      req.headers.get("x-real-ip") ??
+      req.headers.get("x-forwarded-for")?.split(",")[0].trim() ??
+      "unknown";
+    const { lang, accessToken, refreshToken } =
+      await tokenService.rotateTokens(raw, ip); // Read preferred lang for the new token's user
     const res = NextResponse.json({ success: true });
-    setAuthCookies(res, {accessToken, refreshToken}, lang);
+    setAuthCookies(res, { accessToken, refreshToken }, lang);
     return res;
   } catch (err) {
     return handleError(err);

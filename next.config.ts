@@ -21,20 +21,26 @@ const securityHeaders = [
     value: [
       "default-src 'self'",
 
-      // ✅ Razorpay scripts + your existing
-      "script-src 'self' 'unsafe-eval' 'unsafe-inline' https://checkout.razorpay.com https://cdn.razorpay.com",
+      // ✅ Razorpay scripts
+      "script-src 'self' https://checkout.razorpay.com https://cdn.razorpay.com",
 
       // ✅ Images (unchanged)
       "img-src 'self' res.cloudinary.com data: blob:",
 
       // ✅ API calls + Razorpay tracking
-      "connect-src 'self' https://api.cloudinary.com *.neon.tech *.upstash.io app.glitchtip.com https://api.razorpay.com https://lumberjack.razorpay.com",
+      "connect-src 'self' https://api.cloudinary.com *.supabase.co *.upstash.io app.glitchtip.com https://api.razorpay.com https://lumberjack.razorpay.com",
 
       // ✅ REQUIRED for Razorpay modal (THIS WAS MISSING 🔥)
       "frame-src https://api.razorpay.com https://checkout.razorpay.com",
 
       "font-src 'self' data:",
       "style-src 'self' 'unsafe-inline'",
+
+      // prevention from session hijacking
+      "frame-ancestors 'none'", // prevents clickjacking / UI redressing
+      "object-src 'none'", // blocks Flash, Java applets
+      "base-uri 'self'", // prevents base tag hijacking
+      "form-action 'self'", //forms can only submit to same origin
     ].join("; "),
   },
 ];

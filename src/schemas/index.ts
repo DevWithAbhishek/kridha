@@ -31,6 +31,11 @@ const ProductUnitEnum = z.enum([
 // daysActive — uppercase, consistent with Prisma schema and API contract
 const DayEnum = z.enum(["MON", "TUE", "WED", "THU", "FRI", "SAT", "SUN"]);
 
+// To strip HTML tags from user-provided strings
+// Prevents stored XSS when content is rendered server-side or in emails
+const safeString = () =>
+  z.string().transform((s) => s.replace(/<[^>]*>/g, "").trim());
+
 const PriceTierSchema = z
   .object({
     minQty: z.number().positive(),
@@ -56,12 +61,17 @@ export const SignupSchema = z
       .min(1, "PIN_REQUIRED")
       .length(4, "PIN_LENGTH")
       .regex(/^[0-9]{4}$/, "PIN_LENGTH"),
-    confirmPin: z.string().length(4, "PIN_LENGTH"),
-    name: z
+    confirmPin: z
       .string()
-      .min(1, "NAME_REQUIRED")
-      .min(3, "NAME_TOO_SHORT")
-      .max(40, "NAME_TOO_LONG"),
+      .length(4, "PIN_LENGTH")
+      .regex(/^[0-9]{4}$/, "PIN_LENGTH"),
+    name: safeString().pipe(
+      z
+        .string()
+        .min(1, "NAME_REQUIRED")
+        .min(3, "NAME_TOO_SHORT")
+        .max(40, "NAME_TOO_LONG"),
+    ),
   })
   .refine((data) => data.pin === data.confirmPin, {
     path: ["confirmPin"],
@@ -117,12 +127,12 @@ export const ResetPinSchema = z
   });
 
 export const RegisterAsSellerSchema = z.object({
-  storeName: z.string().min(3, "STORE_NAME_SHORT").max(100),
-  street: z.string().min(5, "STREET_SHORT").max(200),
-  line2: z.string().max(100).optional(),
-  landmark: z.string().max(100).optional(),
-  city: z.string().min(2, "CITY_SHORT").max(50),
-  state: z.string().min(2, "STATE_SHORT").max(50),
+  storeName: safeString().pipe(z.string().min(3, "STORE_NAME_SHORT").max(100)),
+  street: safeString().pipe(z.string().min(5, "STREET_SHORT").max(200)),
+  line2: safeString().pipe(z.string().max(100)).optional(),
+  landmark: safeString().pipe(z.string().max(100)).optional(),
+  city: safeString().pipe(z.string().min(2, "CITY_SHORT").max(50)),
+  state: safeString().pipe(z.string().min(2, "STATE_SHORT").max(50)),
   pincode: z
     .string()
     .length(6, "PINCODE_INVALID")
@@ -136,14 +146,16 @@ export const RegisterAsSellerSchema = z.object({
   gstNo: z.string().max(15).optional(),
   panNo: z
     .string()
-    .transform((val) => val.toUpperCase())
-    .refine((val) => /^[A-Z]{5}[0-9]{4}[A-Z]{1}$/.test(val), {
+    .transform((val) => val.toUpperCase().trim())
+    .refine((val) => /^[A-Z]{5}[0-9]{4}[A-Z]$/.test(val), {
       message: "PAN_INVALID",
     }),
-  accountHolderName: z.string().min(3, "ACCOUNT_NAME_SHORT").max(100),
+  accountHolderName: safeString().pipe(
+    z.string().min(3, "ACCOUNT_NAME_SHORT").max(100),
+  ),
   accountNumber: z.string().min(9, "ACCOUNT_INVALID").max(18),
   ifscCode: z.string().regex(/^[A-Z]{4}0[A-Z0-9]{6}$/, "IFSC_INVALID"),
-  bankName: z.string().min(3, "BANK_SHORT").max(100),
+  bankName: safeString().pipe(z.string().min(3, "BANK_SHORT").max(100)),
   pickupWindows: z
     .array(
       z.object({
@@ -160,12 +172,12 @@ export const RegisterAsSellerSchema = z.object({
 // ── 2. User Profile ───────────────────────────────────────────────────────
 
 export const EditUserProfileSchema = z.object({
-  name: z.string().min(2).max(40).optional(),
-  street: z.string().optional(),
-  line2: z.string().optional(),
-  landmark: z.string().optional(),
-  city: z.string().optional(),
-  state: z.string().optional(),
+  name: safeString().pipe(z.string().min(2).max(40)).optional(),
+  street: safeString().optional(),
+  line2: safeString().optional(),
+  landmark: safeString().optional(),
+  city: safeString().optional(),
+  state: safeString().optional(),
   preferredLang: z.enum(["en", "hi"]).optional(),
 });
 
@@ -177,12 +189,12 @@ export const EditUserAvatarSchema = z.object({
 // ── 3. Seller Profile ─────────────────────────────────────────────────────
 
 export const EditSellerProfileSchema = z.object({
-  storeName: z.string().min(2).max(100).optional(),
-  street: z.string().optional(),
-  line2: z.string().optional(),
-  landmark: z.string().optional(),
-  city: z.string().optional(),
-  state: z.string().optional(),
+  storeName: safeString().pipe(z.string().min(2).max(100)).optional(),
+  street: safeString().optional(),
+  line2: safeString().optional(),
+  landmark: safeString().optional(),
+  city: safeString().optional(),
+  state: safeString().optional(),
   pinCode: z
     .string()
     .length(6)
@@ -191,15 +203,15 @@ export const EditSellerProfileSchema = z.object({
   businessType: z
     .enum(["INDIVIDUAL", "PROPRIETORSHIP", "PARTNERSHIP", "PVT_LTD"])
     .optional(),
-  gstNumber: z.string().optional(),
+  gstNumber: z.string().trim().optional(),
   panNumber: z.string().min(10).max(10).optional(),
-  accountHolderName: z.string().min(2).optional(),
-  accountNumber: z.string().min(8).max(18).optional(),
+  accountHolderName: safeString().pipe(z.string().min(2)).optional(),
+  accountNumber: z.string().trim().min(8).max(18).optional(),
   ifscCode: z
     .string()
     .regex(/^[A-Z]{4}0[A-Z0-9]{6}$/)
     .optional(),
-  bankName: z.string().min(2).optional(),
+  bankName: safeString().pipe(z.string().min(2)).optional(),
 });
 
 export const EditSellerProfileImageSchema = z.object({
@@ -218,8 +230,8 @@ export const EditSellerProfileImageSchema = z.object({
 
 export const AddPickupWindowSchema = z
   .object({
-    labelEn: z.string().min(1),
-    labelHi: z.string().min(1),
+    labelEn: safeString().pipe(z.string().min(1)),
+    labelHi: safeString().pipe(z.string().min(1)),
     startTime: z.iso.time(),
     endTime: z.iso.time(),
     daysActive: z.array(DayEnum).min(1),
@@ -231,8 +243,8 @@ export const AddPickupWindowSchema = z
 
 export const EditPickupWindowSchema = z
   .object({
-    labelEn: z.string().min(1).optional(),
-    labelHi: z.string().min(1).optional(),
+    labelEn: safeString().pipe(z.string().min(1)).optional(),
+    labelHi: safeString().pipe(z.string().min(1)).optional(),
     startTime: z.iso.time().optional(),
     endTime: z.iso.time().optional(),
     daysActive: z.array(DayEnum).min(1).optional(),
@@ -249,7 +261,7 @@ export const EditPickupWindowSchema = z
 
 export const GetProductsSchema = z
   .object({
-    q: z.string().optional(),
+    q: safeString().optional(),
     lat: z.coerce.number().min(8).max(37),
     lng: z.coerce.number().min(68).max(98),
     radius: z.coerce.number().positive().max(50).optional().default(20),
@@ -258,7 +270,7 @@ export const GetProductsSchema = z
     maxPrice: z.coerce.number().positive().optional(),
     isBranded: z.coerce.boolean().optional(),
     dealActive: z.coerce.boolean().optional(),
-    sellerId: z.string().optional(),
+    sellerId: z.string().trim().optional(),
     sortBy: z
       .enum(["price_asc", "price_desc", "distance"])
       .optional()
@@ -292,7 +304,7 @@ export const GetProductsWithActiveDealSchema = z.object({
   isBranded: z.coerce.boolean().optional(),
   minPrice: z.coerce.number().optional(),
   maxPrice: z.coerce.number().optional(),
-  q: z.string().optional(),
+  q: safeString().optional(),
 });
 
 // ── 6. Products — Seller ──────────────────────────────────────────────────
@@ -305,13 +317,13 @@ export const GetSellerProductsSchema = z.object({
 });
 
 export const AddProductBaseSchema = z.object({
-  nameEn: z.string().min(2).max(200),
-  nameHi: z.string().max(200).optional(),
-  description: z.string().optional(),
+  nameEn: safeString().pipe(z.string().min(2).max(200)),
+  nameHi: safeString().pipe(z.string().max(200)).optional(),
+  description: safeString().optional(),
   category: ProductCategoryEnum,
   isBranded: z.boolean().default(false),
   imageUrls: z.array(z.url()).max(5).optional(),
-  blurHash: z.string().optional(),
+  blurHash: z.string().trim().optional(),
   available: z.number().nonnegative(),
   minOrderQuantity: z.number().positive(),
   maxOrderQuantity: z.number().positive().optional(),
@@ -333,13 +345,13 @@ export const AddProductSchema = AddProductBaseSchema.refine(
 
 export const UpdateProductSchema = z
   .object({
-    nameEn: z.string().min(2).max(200).optional(),
-    nameHi: z.string().max(200).optional(),
-    description: z.string().optional(),
+    nameEn: safeString().pipe(z.string().min(2).max(200)).optional(),
+    nameHi: safeString().pipe(z.string().max(200)).optional(),
+    description: safeString().optional(),
     category: ProductCategoryEnum.optional(),
     isBranded: z.boolean().optional(),
     imageUrls: z.array(z.url()).max(5).optional(),
-    blurHash: z.string().optional(),
+    blurHash: z.string().trim().optional(),
     available: z.number().positive().optional(),
     minOrderQty: z.number().positive().optional(),
     maxOrderQty: z.number().positive().optional(),
@@ -490,7 +502,7 @@ export const GetOrdersSchema = z.object({
 });
 
 export const CancelOrderSchema = z.object({
-  reason: z.string().min(1).max(500).optional(),
+  reason: safeString().pipe(z.string().min(1).max(500)).optional(),
 });
 
 export const VerifyOtpSchema = z.object({
@@ -525,13 +537,13 @@ export const AddReviewSchema = z.object({
   subOrderId: z.cuid(),
   productId: z.cuid(),
   rating: z.number().int().min(1).max(5),
-  comment: z.string().max(1000).optional(),
+  comment: safeString().pipe(z.string().max(1000)).optional(),
 });
 
 export const UpdateReviewSchema = z
   .object({
     rating: z.number().int().min(1).max(5).optional(),
-    comment: z.string().max(1000).optional(),
+    comment: safeString().pipe(z.string().max(1000)).optional(),
   })
   .refine((d) => d.rating !== undefined || d.comment !== undefined, {
     message: "At least one of rating or comment must be provided",

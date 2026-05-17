@@ -17,10 +17,14 @@ export const adminService = {
 
   async login(input: AdminLoginInput, ip: string) {
     const admin = await adminRepo.findByEmail(input.email);
+
+    // timing attack prevention: always hash and compare, even if admin not found
+    const DUMMY_HASH = "$argon2id$v=21$m=65536,t=4,p=6$dummy";
+    const hash = admin?.passwordHash ?? DUMMY_HASH;
+    const valid = await verifyAdminPassword(input.password, hash);
+
     // Same message for wrong email and wrong password — prevents enumeration
     if (!admin) throw ERR.ADMIN_INVALID_CREDENTIALS;
-
-    const valid = await verifyAdminPassword(input.password, admin.passwordHash);
     if (!valid) {
       logger.warn({ email: input.email, ip, action: "admin.login.fail" }, "Admin login failed");
       throw ERR.ADMIN_INVALID_CREDENTIALS;

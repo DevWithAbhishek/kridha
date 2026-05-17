@@ -26,7 +26,9 @@ export async function getOptionalUser(
 
     if (!token) return null;
 
-    const payload = jwt.verify(token, process.env.JWT_SECRET!) as JwtPayload;
+    const payload = jwt.verify(token, process.env.JWT_SECRET!, {
+      algorithms: ["HS256"],
+    }) as JwtPayload;
 
     if (!payload || typeof payload !== "object" || !payload.userId) {
       return null;

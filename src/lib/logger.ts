@@ -23,7 +23,7 @@ export const logger = pino({
   // Fields redacted before writing — never appear in any log output
   redact: {
     paths: [
-      "pin",
+      "pinHash",
       "newPin",
       "confirmPin",
       "otp",
@@ -32,6 +32,7 @@ export const logger = pino({
       "accessToken",
       "tokenHash",
       "authorization",
+      "userSession",
       "headers.authorization",
       "headers.cookie",
       "body.pin",

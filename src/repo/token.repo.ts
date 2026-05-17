@@ -1,54 +1,71 @@
 import { prisma } from "@/lib/db";
 
 export const tokenRepo = {
-  async getStoredTokenByHash(tokenHash: string) {
-    return await prisma.refreshToken.findUnique({
+  async getStoredSessionByHash(tokenHash: string) {
+    return await prisma.userSession.findUnique({
       where: { tokenHash },
       include: { user: { select: { id: true, roles: true } } },
     });
   },
 
   async getPreferredLangForNewToken() {
-    return await prisma.refreshToken.findFirst({
+    return await prisma.userSession.findFirst({
       where: { revoked: false },
       include: { user: { select: { preferredLang: true } } },
       orderBy: { createdAt: "desc" },
     });
   },
-  async createRefreshToken(
+  async createSession(
     userId: string,
     family: string,
     tokenHash: string,
     expiresAt: Date,
+    ip?: string,
+    userAgent?: string,
+    deviceInfo?: string,
+    lastSeenIp?: string,
+    lastSeenAt?: Date
   ) {
-    await prisma.refreshToken.create({
+    await prisma.userSession.create({
       data: {
         tokenHash,
         userId,
         family,
+        ipAddress: ip,
+        userAgent,
+        deviceInfo,
+        lastSeenIp,
+        lastSeenAt,
         expiresAt,
       },
     });
   },
 
-  async revokeTokenByFamily(family: string) {
-    await prisma.refreshToken.updateMany({
+  async revokeSessionByFamily(family: string) {
+    await prisma.userSession.updateMany({
       where: { family: family },
       data: { revoked: true },
     });
   },
 
-  async revokeTokenByHash(tokenHash: string) {
-    await prisma.refreshToken.updateMany({
+  async revokeSessionByHash(tokenHash: string) {
+    await prisma.userSession.updateMany({
       where: { tokenHash },
       data: { revoked: true },
     });
   },
 
-  async revokeTokenByUserId(userId: string) {
-    await prisma.refreshToken.updateMany({
+  async revokeSessionByUserId(userId: string) {
+    await prisma.userSession.updateMany({
       where: { userId },
       data: { revoked: true },
     });
   },
+
+  async updateSessionByLastSeenIp(id: string, lastSeenIp?: string, lastSeenAt?: Date) {
+    await prisma.userSession.update({
+      where: { id },
+      data: { lastSeenIp, lastSeenAt },
+    })
+  }
 };

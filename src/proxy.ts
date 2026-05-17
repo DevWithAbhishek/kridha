@@ -1,8 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import jwt from "jsonwebtoken";
-import { Ratelimit } from "@upstash/ratelimit";
-import { Redis } from "@upstash/redis";
 import { logger } from "@/lib/logger";
+import { limiters } from "@/lib/rateLimiter";
+import * as Sentry from "@sentry/nextjs";
 
 interface JwtPayload {
   userId: string;
@@ -13,31 +13,6 @@ interface AdminJwtPayload {
   role: string;
   type: "admin";
 }
-
-const redis = new Redis({
-  url: process.env.UPSTASH_REDIS_REST_URL!,
-  token: process.env.UPSTASH_REDIS_REST_TOKEN!,
-});
-
-// Two limiters — tighter for auth endpoints to slow brute-force
-const generalLimiter = new Ratelimit({
-  redis,
-  limiter: Ratelimit.slidingWindow(60, "1 m"),
-  analytics: false,
-});
-
-const authLimiter = new Ratelimit({
-  redis,
-  limiter: Ratelimit.slidingWindow(5, "1 m"),
-  analytics: false,
-});
-
-// Admin login is rate-limited the hardest — 2 attempts per minute per IP
-const adminAuthLimiter = new Ratelimit({
-  redis,
-  limiter: Ratelimit.slidingWindow(2, "1 m"),
-  analytics: false,
-});
 
 const PUBLIC_EXACT = new Set([
   "/api/auth/signup",
@@ -87,30 +62,29 @@ function rateLimited(remaining: number) {
   );
 }
 
+// src/proxy.ts — reorder sections
+
 export async function proxy(req: NextRequest) {
   const { pathname } = req.nextUrl;
 
-  // Cron endpoints — Bearer CRON_SECRET only
+  // 1. Cron — secret check first, no rate limiting needed
   if (pathname.startsWith("/api/cron/")) {
     const auth = req.headers.get("authorization");
-    if (auth !== `Bearer ${process.env.CRON_SECRET}`) {
-      return unauthenticated();
-    }
+    if (auth !== `Bearer ${process.env.CRON_SECRET}`) return unauthenticated();
     return NextResponse.next();
   }
 
-  // ── Admin routes: /api/admin/* ─────────────────────────────────────────
-  // Handled BEFORE user auth — completely separate path.
+  const ip = req.headers.get("x-real-ip")
+          ?? req.headers.get("x-forwarded-for")?.split(",")[0].trim()
+          ?? "127.0.0.1";
+
+  // 2. Admin routes — separate auth surface
   if (pathname.startsWith("/api/admin/")) {
-    // Admin login route: rate limit hard, then pass through (no token needed)
     if (pathname === "/api/admin/auth/login") {
-      const ip = req.headers.get("x-forwarded-for") ?? "127.0.0.1";
       try {
-        const { success, remaining } = await adminAuthLimiter.limit(
-          `admin_login:${ip}`,
-        );
+        const { success, remaining } = await limiters.adminAuthLimiter.limit(`admin_login:${ip}`);
         if (!success) {
-          logger.warn({ ip, path: pathname }, "Admin login rate limited");
+          logger.warn({ event: "security.rate_limited", ip, path: pathname }, "admin rate limited");
           return rateLimited(remaining);
         }
       } catch (err) {
@@ -119,17 +93,13 @@ export async function proxy(req: NextRequest) {
       return NextResponse.next();
     }
 
-    // All other /api/admin/* routes: verify kridha_admin cookie
     const adminToken = req.cookies.get("kridha_admin")?.value;
     if (!adminToken) return unauthenticated();
 
     try {
-      const payload = jwt.verify(
-        adminToken,
-        process.env.ADMIN_JWT_SECRET!,
-      ) as AdminJwtPayload;
-
-      // type guard — reject user tokens even if somehow signed with same secret
+      const payload = jwt.verify(adminToken, process.env.ADMIN_JWT_SECRET!, {
+        algorithms: ["HS256"],
+      }) as AdminJwtPayload;
       if (payload.type !== "admin") return unauthenticated();
 
       const headers = new Headers(req.headers);
@@ -137,80 +107,116 @@ export async function proxy(req: NextRequest) {
       headers.set("x-admin-role", payload.role);
       return NextResponse.next({ request: { headers } });
     } catch {
+      logger.warn({ event: "security.admin_auth_failed", path: pathname }, "invalid admin token");
       return unauthenticated();
     }
   }
 
-  // Fully public routes
-  if (PUBLIC_EXACT.has(pathname)) return NextResponse.next();
-
-  // Rate limiting — applied to all routes except webhooks (Razorpay must never be 429'd)
+  // 3. Layer 1 — Per-IP rate limiting (ALL routes except webhook and cron)
+  // Runs before PUBLIC_EXACT so login/signup are also IP-rate-limited
   if (pathname !== "/api/webhooks/razorpay") {
-    const ip = req.headers.get("x-forwarded-for") ?? "127.0.0.1";
-    const limiter = AUTH_PATHS.has(pathname) ? authLimiter : generalLimiter;
+    const limiter = AUTH_PATHS.has(pathname)
+      ? limiters.authLimiter      // 5/min for auth endpoints
+      : limiters.generalLimiter;  // 60/min for everything else
+
     try {
-      const { success, remaining } = await limiter.limit(ip);
+      const { success, remaining } = await limiter.limit(`ip:${ip}`);
       if (!success) {
-        return NextResponse.json(
-          {
-            success: false,
-            code: "RATE_LIMITED",
-            message: "Too many requests. Try again later.",
-          },
-          {
-            status: 429,
-            headers: { "X-RateLimit-Remaining": String(remaining) },
-          },
-        );
+        logger.warn({ event: "security.rate_limited_ip", ip, path: pathname, layer: 1 }, "IP rate limited");
+        return rateLimited(remaining);
       }
     } catch (err) {
-      logger.error({ err, path: pathname }, "Rate limiter failed");
+      logger.error({ err, path: pathname }, "Rate limiter layer 1 failed — fail open");
     }
   }
 
-  // Public GET — optional auth (for INV-14 seller exclusion)
-  const isPublicGet =
-    req.method === "GET" && PUBLIC_GET_PATTERNS.some((r) => r.test(pathname));
+  // 4. Layer 2 — Per-account (login only, distributed stuffing prevention)
+  if (pathname === "/api/auth/login" && req.method === "POST") {
+    try {
+      const body = await req.clone().json().catch(() => ({}));
+      const phone = body?.phone as string | undefined;
 
-  // Extract token
+      if (phone && typeof phone === "string") {
+        const accountKey = `account:${phone.slice(-6)}`;
+        const { success } = await limiters.accountLimiter.limit(accountKey);
+
+        if (!success) {
+          logger.warn({
+            event: "security.rate_limited_account",
+            phoneTail: phone.slice(-4),
+            ip, layer: 2,
+          }, "Account rate limited — possible credential stuffing");
+
+          Sentry.captureMessage(
+            `Account rate limit: ${phone.slice(-4)} from ${ip}`,
+            "warning"
+          );
+          return rateLimited(0);
+        }
+      }
+    } catch (err) {
+      logger.error({ err }, "Rate limiter layer 2 failed — fail open");
+    }
+  }
+
+  // 5. Layer 3 — Global auth (resource exhaustion / DDoS prevention)
+  if (AUTH_PATHS.has(pathname)) {
+    try {
+      const { success } = await limiters.globalAuthLimiter.limit("global:auth");
+      if (!success) {
+        logger.error({
+          event: "security.global_auth_rate_limited",
+          ip, path: pathname, layer: 3,
+        }, "CRITICAL: global auth rate limit — possible DDoS");
+
+        Sentry.captureMessage(
+          "Global auth rate limit exceeded — possible DDoS",
+          "fatal"
+        );
+        return rateLimited(0);
+      }
+    } catch (err) {
+      logger.error({ err }, "Rate limiter layer 3 failed — fail open");
+    }
+  }
+
+  // 6. Public exact routes — pass through (auth handled above already)
+  if (PUBLIC_EXACT.has(pathname)) return NextResponse.next();
+
+  // 7. Public GET — optional auth for INV-14 (seller feed exclusion)
+  const isPublicGet =
+    req.method === "GET" && PUBLIC_GET_PATTERNS.some(r => r.test(pathname));
+
   const token = req.cookies.get("kridha_access")?.value;
 
   if (isPublicGet) {
     if (!token) return NextResponse.next();
-    if (token) {
-      try {
-        const payload = jwt.verify(
-          token,
-          process.env.JWT_SECRET!,
-        ) as JwtPayload;
-        if (!payload || typeof payload !== "object" || !payload.userId) {
-          return unauthenticated();
-        }
-        return NextResponse.next();
-      } catch {
-        return NextResponse.next();
-      }
+    try {
+      const payload = jwt.verify(token, process.env.JWT_SECRET!, {
+        algorithms: ["HS256"],
+      }) as JwtPayload;
+      if (!payload?.userId) return NextResponse.next();
+      return NextResponse.next();
+    } catch {
+      return NextResponse.next(); // invalid token on public route — pass through
     }
   }
 
-  // Protected — require valid access token
-  if (!token) {
-    return unauthenticated();
-  }
+  // 8. Protected routes — require valid kridha_access cookie
+  if (!token) return unauthenticated();
 
   try {
-    const payload = jwt.verify(token, process.env.JWT_SECRET!) as JwtPayload;
-    if (!payload || typeof payload !== "object" || !payload.userId) {
-      return unauthenticated();
-    }
+    const payload = jwt.verify(token, process.env.JWT_SECRET!, {
+      algorithms: ["HS256"],
+    }) as JwtPayload;
+    if (!payload?.userId) return unauthenticated();
     return NextResponse.next();
   } catch {
-    // try refresh
     const refresh = req.cookies.get("kridha_refresh")?.value;
-
     if (refresh) {
       return NextResponse.redirect(new URL("/api/auth/refresh", req.url));
     }
+    logger.warn({ event: "security.auth_failed", path: pathname }, "invalid user token");
     return unauthenticated();
   }
 }

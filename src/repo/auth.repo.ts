@@ -90,7 +90,7 @@ export const authRepo = {
         data: { pin: newPin },
       }),
       // Revoke all sessions — force re-login after PIN change
-      prisma.refreshToken.updateMany({
+      prisma.userSession.updateMany({
         where: { user: { phone } },
         data: { revoked: true },
       }),

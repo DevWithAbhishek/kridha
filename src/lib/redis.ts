@@ -70,3 +70,28 @@ export async function cacheDel(...keys: string[]): Promise<void> {
     /* non-fatal */
   }
 }
+
+export const redis = {
+  async ping(): Promise<string> {
+    if (upstash) {
+      await upstash.ping();
+      return "PONG";
+    }
+    if (localRedis) {
+      return await localRedis.ping();
+    }
+    throw new Error("No Redis configured");
+  },
+
+  async get<T>(key: string): Promise<T | null> {
+    return cacheGet<T>(key);
+  },
+
+  async set(key: string, value: unknown, ttlSeconds: number): Promise<void> {
+    return cacheSet(key, value, ttlSeconds);
+  },
+
+  async del(...keys: string[]): Promise<void> {
+    return cacheDel(...keys);
+  },
+};

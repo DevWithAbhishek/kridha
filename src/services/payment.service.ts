@@ -3,6 +3,10 @@ import { ERR } from "@/lib/errors";
 import { getRazorPay } from "@/lib/razorpay";
 import { validateTransition } from "@/lib/state-machine";
 import { notificationService } from "./notification.service";
+import { logger } from "@/lib//logger";
+import * as Sentry from "@sentry/nextjs";
+import { paymentRepo } from "@/repo/payment.repo";
+import { string } from "zod";
 
 type RzOrder = {
   id: string;
@@ -12,10 +16,7 @@ type RzOrder = {
 
 export const paymentService = {
   async createAdvance(subOrderId: string, buyerId: string) {
-    const sub = await prisma.subOrder.findUnique({
-      where: { id: subOrderId },
-      include: { order: true },
-    });
+    const sub = await paymentRepo.findSubOrderWithOrderById(subOrderId);
     if (!sub) throw ERR.SUBORDER_NOT_FOUND;
     if (sub.order.buyerId !== buyerId) throw ERR.FORBIDDEN;
     if (sub.status !== "PENDING")
@@ -50,10 +51,7 @@ export const paymentService = {
         .catch(() => {
           throw ERR.RAZORPAY_ERROR;
         })) as RzOrder;
-      await prisma.subOrder.update({
-        where: { id: subOrderId },
-        data: { razorpayAdvanceId: rzOrder.id },
-      });
+      await paymentRepo.updateSubOrderAdvanceId(subOrderId, rzOrder.id);
     }
     return {
       razorpayOrderId: rzOrder.id,
@@ -63,10 +61,7 @@ export const paymentService = {
   },
 
   async requestPaymentLink(subOrderId: string, sellerId: string) {
-    const sub = await prisma.subOrder.findUnique({
-      where: { id: subOrderId },
-      include: { order: true },
-    });
+    const sub = await paymentRepo.findSubOrderWithOrderById(subOrderId);
     if (!sub) throw ERR.SUBORDER_NOT_FOUND;
     if (sub.sellerId !== sellerId) throw ERR.FORBIDDEN;
     validateTransition(sub.status, "AWAITING_PAYMENT");
@@ -93,25 +88,13 @@ export const paymentService = {
         throw ERR.RAZORPAY_ERROR;
       });
 
-    await prisma.$transaction([
-      prisma.subOrder.update({
-        where: { id: subOrderId },
-        data: {
-          status: "AWAITING_PAYMENT",
-          paymentLinkId: link.id,
-          paymentLinkUrl: link.short_url,
-          paymentLinkExpiresAt: new Date(expiresAt * 1000),
-        },
-      }),
-      prisma.orderStatusHistory.create({
-        data: {
-          subOrderId,
-          orderId: sub.orderId,
-          fromStatus: "CONFIRMED",
-          toStatus: "AWAITING_PAYMENT",
-        },
-      }),
-    ]);
+    await paymentRepo.updateSubOrderToAwaitingPayment(
+      subOrderId,
+      link.id,
+      link.short_url,
+      expiresAt,
+      sub.orderId,
+    );
 
     return {
       paymentLinkUrl: link.short_url,
@@ -122,10 +105,7 @@ export const paymentService = {
   },
 
   async verifyOtp(subOrderId: string, sellerId: string, otp: string) {
-    const sub = await prisma.subOrder.findUnique({
-      where: { id: subOrderId },
-      include: { order: true },
-    });
+    const sub = await paymentRepo.findSubOrderWithOrderById(subOrderId);
     if (!sub) throw ERR.SUBORDER_NOT_FOUND;
     if (sub.sellerId !== sellerId) throw ERR.FORBIDDEN;
     validateTransition(sub.status, "COMPLETED");
@@ -135,29 +115,17 @@ export const paymentService = {
       const newAttempts = sub.otpAttempts + 1;
       if (newAttempts >= 3) {
         // DISPUTED after 3 wrong attempts
-        await prisma.$transaction([
-          prisma.subOrder.update({
-            where: { id: subOrderId },
-            data: {
-              otpAttempts: newAttempts,
-              status: "DISPUTED",
-            },
-          }),
-          prisma.orderStatusHistory.create({
-            data: {
-              subOrderId,
-              orderId: sub.orderId,
-              fromStatus: sub.status,
-              toStatus: "DISPUTED",
-              note: "Max OTP attempts exceeded",
-            },
-          }),
-        ]);
+        await paymentRepo.updateSubOrderToDisputed(
+          subOrderId,
+          newAttempts,
+          sub.orderId,
+          sub.status,
+        );
       } else {
-        await prisma.subOrder.update({
-          where: { id: subOrderId },
-          data: { otpAttempts: newAttempts },
-        });
+        await paymentRepo.updateSubOrderOtpVerifyAttempts(
+          subOrderId,
+          newAttempts,
+        );
       }
       throw ERR.INVALID_OTP;
     }
@@ -166,35 +134,205 @@ export const paymentService = {
       (sub.totalAmount - sub.platformFee).toFixed(2),
     );
 
-    const [updatedSub, payout, _] = await prisma.$transaction([
-      prisma.subOrder.update({
-        where: { id: subOrderId },
-        data: {
-          status: "COMPLETED",
-          deliveryOtp: null, // INV-06: cleared immediately
-          otpVerifiedAt: new Date(),
-        },
-      }),
-      prisma.payout.create({
-        data: {
-          subOrderId,
-          sellerId,
-          amount: payoutAmount,
-          status: "PENDING",
-        },
-      }),
-      prisma.orderStatusHistory.create({
-        data: {
-          subOrderId,
-          orderId: sub.orderId,
-          fromStatus: "READY_FOR_OTP_VERIFICATION",
-          toStatus: "COMPLETED",
-        },
-      }),
-    ]);
+    const [updatedSub, payout, _] = await paymentRepo.updateSubOrderToCompleted(
+      subOrderId,
+      sellerId,
+      payoutAmount,
+      sub.orderId,
+    );
 
     // Fire and Forget notifications
     notificationService.orderCompleted(subOrderId).catch(console.error);
     return { subOrder: updatedSub, payoutId: payout.id };
+  },
+
+  async handlePaymentCaptured(payload: any, paymentId: string | null) {
+    const entity = payload.payload.payment.entity;
+    const orderId = entity.order_id; // Razorpay order Id -> matches SubOrder.razorpayAdvanceId
+
+    const subOrder = await prisma.subOrder.findFirst({
+      where: { razorpayAdvanceId: orderId },
+      include: { order: { select: { buyerId: true } } },
+    });
+
+    if (!subOrder) {
+      logger.warn(
+        {
+          event: "webhook.suborder_not_found",
+          orderId,
+        },
+        "SubOrder not found for captured payment",
+      );
+      await paymentRepo.createMissingSubOrderWebhookLog(paymentId!);
+      return;
+    }
+
+    if (subOrder.status !== "PENDING") {
+      logger.info(
+        {
+          event: "webhook.wrong_status",
+          subOrderId: subOrder.id,
+          status: subOrder.status,
+        },
+        "SubOrder not PENDING - skipping",
+      );
+    }
+
+    // Atomic: log + update status + generate OTP in one transaction
+    const otp = Math.floor(1000 + Math.random() * 9000).toString();
+    await paymentRepo.createAdvancePayment(
+      paymentId!,
+      subOrder.id,
+      entity.amount / 100,
+      orderId,
+      otp,
+    );
+
+    // Notifications outside transaction — fire and forget
+    notificationService.orderConfirmed(subOrder.id, otp).catch(console.error);
+
+    logger.info(
+      {
+        event: "payment.captured.processed",
+        subOrderId: subOrder.id,
+      },
+      "SubOrder confirmed",
+    );
+  },
+
+  async handlePaymentLinkPaid(payload: any, paymentId: string | null) {
+    const entity = payload.payload.payment_link.entity;
+    const paymentLinkId = entity.id;
+
+    const subOrder =
+      await paymentRepo.findSubOrderByPaymentLinkId(paymentLinkId);
+
+    if (!subOrder || subOrder.status !== "AWAITING_PAYMENT") {
+      await paymentRepo.createMissingSubOrderWebhookLog(paymentId!);
+      return;
+    }
+
+    validateTransition(subOrder.status, "READY_FOR_OTP_VERIFICATION");
+
+    await paymentRepo.createRemainingPayment(
+      paymentId,
+      paymentLinkId,
+      subOrder.id,
+      subOrder.remainingAmount,
+    );
+
+    notificationService.readyForOtp(subOrder.id).catch(console.error);
+  },
+
+  async handlePaymentFailed(payload: any) {
+    const entity = payload.payload.payment.entity;
+    const orderId = entity.order_id;
+
+    const subOrder = await prisma.subOrder.findFirst({
+      where: { razorpayAdvanceId: orderId },
+    });
+
+    if (!subOrder) return;
+
+    await paymentRepo.createPaymentFailed(
+      subOrder.id,
+      entity.amount / 100,
+      orderId,
+      entity.id,
+    );
+
+    logger.warn(
+      {
+        event: "payment.failed",
+        subOrderId: subOrder.id,
+        reason: entity.error_description,
+      },
+      "advance payment failed",
+    );
+  },
+
+  async handlePaymentLinkExpired(payload: any) {
+    const entity = payload.payload.payment_link.entity;
+    const paymentLinkId = entity.id;
+
+    const subOrder =
+      await paymentRepo.findSubOrderWithPendingPayment(paymentLinkId);
+
+    if (!subOrder) {
+      await paymentRepo.createMissingSubOrderWebhookLog(paymentLinkId);
+      return;
+    }
+
+    logger.warn(
+      {
+        event: "payment_link.expired",
+        subOrderId: subOrder.id,
+      },
+      "Payment link expired - seller must regenerate",
+    );
+  },
+
+  async handleRefundProcessed(payload: any) {
+    const entity = payload.payload.refund.entity;
+    const refundId = entity.id;
+    await paymentRepo.updateRefundsToProcessed(refundId);
+
+    logger.info(
+      {
+        event: "refund.processed",
+        refundId,
+      },
+      "refund processed",
+    );
+  },
+
+  async handleRefundFailed(payload: any) {
+    const entity = payload.payload.refund.entity;
+    const refundId = entity.id;
+
+    await paymentRepo.updateRefundsToFailed(refundId);
+
+    Sentry.captureMessage(
+      `Refund failed: ${refundId} - manual intervention required`,
+      "error",
+    );
+    logger.error(
+      {
+        event: "refund.failed",
+        refundId,
+      },
+      "refund failed - needs manual action",
+    );
+  },
+
+  async handleDisputeCreated(payload: any) {
+    const dispute = payload.payload.dispute.entity;
+    const entityId = dispute.payment_id;
+
+    logger.warn(
+      {
+        event: "payment.dispute.created",
+        paymentId: entityId,
+        amount: dispute.amount,
+      },
+      "DISPUTE CREATED - admin action required",
+    );
+
+    Sentry.captureMessage(
+      `Razorpay dispute created for payment ${entityId}`,
+      "error",
+    );
+  },
+
+  async handleDisputeResolved(payload: any, event: string) {
+    const dispute = payload.payload.dispute.entity;
+    logger.info(
+      {
+        event: "dispute.resolved",
+        result: event,
+        paymentId: dispute.payment_id,
+      },
+      "dispute resolved",
+    );
   },
 };

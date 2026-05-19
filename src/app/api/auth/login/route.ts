@@ -3,7 +3,7 @@ import { handleError } from "@/lib/handleError";
 import { LoginSchema } from "@/schemas";
 import { authService } from "@/services/auth.service";
 import { setAuthCookies } from "@/lib/cookies";
-import { withLogger } from "@/lib/logger-middleware";
+import { withLogger } from "@/lib/withLogger";
 
 export const POST = withLogger(async (req: NextRequest) =>  {
   try {

@@ -1,8 +1,24 @@
 import { PrismaClient } from "@prisma/client";
+import { PrismaPg } from "@prisma/adapter-pg";
 
-// Singleton — prevents new connections on every hot reload in dev
-const globalForPrisma = globalThis as unknown as { prisma: PrismaClient };
-export const prisma = globalForPrisma.prisma ?? new PrismaClient();
+const globalForPrisma = globalThis as unknown as {
+  prisma?: PrismaClient;
+};
+
+const adapter = new PrismaPg({
+  connectionString: process.env.DATABASE_URL!,
+});
+
+export const prisma =
+  globalForPrisma.prisma ??
+  new PrismaClient({
+    adapter,
+
+    log:
+      process.env.NODE_ENV !== "production"
+        ? ["query", "warn", "error"]
+        : ["error"],
+  });
 
 if (process.env.NODE_ENV !== "production") {
   globalForPrisma.prisma = prisma;
@@ -15,7 +31,7 @@ export async function withRetry<T>(
 ): Promise<T> {
   for (let attempt = 1; attempt <= retries; attempt++) {
     try {
-      return await fn()
+      return await fn();
     } catch (err) {
       const isTransient =
         err instanceof Error &&
@@ -25,8 +41,8 @@ export async function withRetry<T>(
           err.message.includes("timeout"));
 
       if (!isTransient || attempt === retries) throw err;
-      await new Promise(r => setTimeout(r, delayMs * attempt))
+      await new Promise((r) => setTimeout(r, delayMs * attempt));
     }
   }
-  throw new Error('unreachable')
+  throw new Error("unreachable");
 }

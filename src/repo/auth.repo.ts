@@ -16,13 +16,13 @@ export const authRepo = {
   async updateUserPin(userId: string, pinHash: string) {
     await prisma.user.update({
       where: { id: userId },
-      data: { pin: pinHash },
+      data: { pinHash },
     });
   },
 
   async findSeller(storeName: string, street: string) {
     return await prisma.sellerProfile.findFirst({
-      where: { storeName: storeName, street: street },
+      where: { storeName, street },
     });
   },
 
@@ -62,7 +62,7 @@ export const authRepo = {
   async findOtpRequest(phone: string, otpHash: string) {
     return prisma.otpRequest.findFirst({
       where: {
-        phone: phone,
+        phone,
         otpHash,
         usedAt: null,
         expiresAt: { gt: new Date() },
@@ -87,7 +87,7 @@ export const authRepo = {
       }),
       prisma.user.update({
         where: { phone },
-        data: { pin: newPin },
+        data: { pinHash: newPin },
       }),
       // Revoke all sessions — force re-login after PIN change
       prisma.userSession.updateMany({

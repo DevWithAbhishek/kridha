@@ -2,7 +2,6 @@ import { Ratelimit } from "@upstash/ratelimit";
 import { Redis as UpstashRedis } from "@upstash/redis";
 import { createClient } from "redis";
 import { logger } from "./logger";
-import { TypeOf } from "zod/v3";
 
 const hasUpstash = !!process.env.UPSTASH_REDIS_REST_URL?.length;
 
@@ -24,7 +23,7 @@ function makeUpstashLimiters() {
     }),
     adminAuthLimiter: new Ratelimit({
       redis,
-      limiter: Ratelimit.slidingWindow(2, "1 m"),
+      limiter: Ratelimit.slidingWindow(3, "1 m"),
     }),
     accountLimiter: new Ratelimit({
       redis,
@@ -32,7 +31,11 @@ function makeUpstashLimiters() {
     }),
     globalAuthLimiter: new Ratelimit({
       redis,
-      limiter: Ratelimit.slidingWindow(500, "1 m"), //platform-wide
+      limiter: Ratelimit.slidingWindow(3000, "1 m"), //platform-wide
+    }),
+    refreshLimiter: new Ratelimit({
+      redis,
+      limiter: Ratelimit.slidingWindow(30, "1 m"),
     }),
   };
 }
@@ -70,13 +73,13 @@ class LocalRateLimit {
 
       await this.client.zAdd(redisKey, {
         score: now,
-        value: `${now}-${Math.random()}`,
+        value: `${crypto.randomUUID()}`,
       });
       await this.client.expire(redisKey, this.window);
 
       return { success: true, remaining: this.limit - count - 1 };
     } catch (err) {
-      return { success: false, remaining: this.limit }; // fail-open
+      return { success: true, remaining: this.limit }; // fail-open
     }
   }
 }
@@ -89,27 +92,38 @@ async function makeLocalLimiters() {
     .connect()
     .catch(() =>
       logger.warn({}, "Local Redis unavailable - rate limiting disabled"),
-    );
-
+  );
+  
+  
   const make = (limit: number, windowSec: number) =>
     new LocalRateLimit(client, limit, windowSec);
 
+  const generalLimiter = make(60, 60);
+  const authLimiter = make(5, 60);
+  const adminAuthLimiter = make(3, 60);
+  const accountLimiter = make(10, 900);
+  const globalAuthLimiter = make(3000, 60);
+  const refreshLimiter = make(30, 60);
+
   return {
-      generalLimiter: {
-          limit: (k: string) => make(60, 60).check(k),
-      },
-      authLimiter: {
-          limit: (k: string) => make(5, 60).check(k),
-      },
-      adminAuthLimiter: {
-          limit: (k: string) => make(2, 60).check(k),
-      },
-      accountLimiter: {
-          limit: (k: string) => make(10, 900).check(k),
-      },
-      globalAuthLimiter: {
-          limit: (k: string) => make(500, 60).check(k),
-      },
+    generalLimiter: {
+      limit: (k: string) => generalLimiter.check(k),
+    },
+    authLimiter: {
+      limit: (k: string) => authLimiter.check(k),
+    },
+    adminAuthLimiter: {
+      limit: (k: string) => adminAuthLimiter.check(k),
+    },
+    accountLimiter: {
+      limit: (k: string) => accountLimiter.check(k),
+    },
+    globalAuthLimiter: {
+      limit: (k: string) => globalAuthLimiter.check(k),
+    },
+    refreshLimiter: {
+      limit: (k: string) => refreshLimiter.check(k),
+    }
   };
 }
 

@@ -3,6 +3,7 @@ import jwt from "jsonwebtoken";
 import { logger } from "@/lib/logger";
 import { limiters } from "@/lib/rateLimiter";
 import * as Sentry from "@sentry/nextjs";
+import crypto from "crypto";
 
 interface JwtPayload {
   userId: string;
@@ -74,9 +75,7 @@ export async function proxy(req: NextRequest) {
     return NextResponse.next();
   }
 
-  const ip = req.headers.get("x-real-ip")
-          ?? req.headers.get("x-forwarded-for")?.split(",")[0].trim()
-          ?? "127.0.0.1";
+  const ip = req.headers.get("x-real-ip") ?? "127.0.0.1";
 
   // 2. Admin routes — separate auth surface
   if (pathname.startsWith("/api/admin/")) {
@@ -115,12 +114,17 @@ export async function proxy(req: NextRequest) {
   // 3. Layer 1 — Per-IP rate limiting (ALL routes except webhook and cron)
   // Runs before PUBLIC_EXACT so login/signup are also IP-rate-limited
   if (pathname !== "/api/webhooks/razorpay") {
-    const limiter = AUTH_PATHS.has(pathname)
-      ? limiters.authLimiter      // 5/min for auth endpoints
-      : limiters.generalLimiter;  // 60/min for everything else
+    const limiter =
+      pathname === "/api/auth/refresh"
+        ? limiters.refreshLimiter
+        : AUTH_PATHS.has(pathname)
+          ? limiters.authLimiter
+          : limiters.generalLimiter;
 
     try {
-      const { success, remaining } = await limiter.limit(`ip:${ip}`);
+      const { success, remaining } = await limiter.limit(
+        `ip:${pathname}:${ip}`,
+      );
       if (!success) {
         logger.warn({ event: "security.rate_limited_ip", ip, path: pathname, layer: 1 }, "IP rate limited");
         return rateLimited(remaining);
@@ -137,7 +141,11 @@ export async function proxy(req: NextRequest) {
       const phone = body?.phone as string | undefined;
 
       if (phone && typeof phone === "string") {
-        const accountKey = `account:${phone.slice(-6)}`;
+        const normalizedPhone = phone.replace(/\D/g, "");
+
+        const accountKey =
+          "account:" +
+          crypto.createHash("sha256").update(normalizedPhone).digest("hex");
         const { success } = await limiters.accountLimiter.limit(accountKey);
 
         if (!success) {

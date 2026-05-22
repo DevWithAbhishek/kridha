@@ -5,27 +5,24 @@
 
 import { use, useState } from "react";
 import Link from "next/link";
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import * as Dialog from "@radix-ui/react-dialog";
 import {
   ArrowLeft,
   Clock,
-  MapPin,
   Package,
   Copy,
   CheckCircle2,
   AlertCircle,
   X,
   Info,
-  Shield,
   KeyRound,
   ExternalLink,
-  Loader2,
 } from "lucide-react";
 import { api } from "@/lib/api";
 import { useLangStore } from "@/stores/langStore";
 import { Button } from "@/components/ui/Button";
-import type { OrderStatus } from "@/types/dashboard";
+import type { OrderStatus } from "@prisma/client";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 interface StatusHistoryEntry {

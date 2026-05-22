@@ -74,7 +74,7 @@ export default function HealthPage() {
                             <div className="flex items-center gap-3">
                                 <span className={`w-3 h-3 rounded-full ${health.db === 'ok' ? 'bg-emerald-500' : 'bg-rose-500'} animate-pulse-slow`} />
                                 <div>
-                                    <div className="font-semibold">Neon PostgreSQL</div>
+                                    <div className="font-semibold">Supabase PostgreSQL</div>
                                     <p className="text-label-sm text-gray-400">{health.db === 'ok' ? 'Connected' : 'Disconnected'}</p>
                                 </div>
                             </div>

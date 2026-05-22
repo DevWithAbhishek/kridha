@@ -1,6 +1,5 @@
 "use client";
-// src/app/(buyer)/pay/page.tsx
-// Razorpay advance payment page.
+
 // Gets orderId, advance amount, razorpayOrderId from query params (set by checkout).
 // Script loaded once, opens Razorpay modal on "Pay Now".
 // On success: server-side webhook handles PENDING→CONFIRMED, we just navigate.
@@ -16,7 +15,6 @@ import {
   Lock,
   Shield,
 } from "lucide-react";
-import { api } from "@/lib/api";
 import { useLangStore } from "@/stores/langStore";
 import { Button } from "@/components/ui/Button";
 
@@ -118,9 +116,10 @@ function PayContent() {
         image: "/images/kridha_logo_nav.png",
         theme: { color: "#2A9D8F" },
         handler: (response) => {
+          console.log("Razorpay response: ", response);
           setPaymentId(response.razorpay_payment_id);
           setStatus("success");
-          setTimeout(() => router.push(`/orders/${orderId}`), 2000);
+          setTimeout(() => router.push(`/profile/orders/`), 2000);
         },
         modal: {
           ondismiss: () => setStatus("idle"),

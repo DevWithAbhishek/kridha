@@ -10,7 +10,6 @@ import { useQuery } from "@tanstack/react-query";
 import {
   AlertCircle,
   ArrowLeft,
-  CheckCircle2,
   MapPin,
   Clock,
   Package,

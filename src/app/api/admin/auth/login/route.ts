@@ -10,7 +10,7 @@ import { setAdminCookie } from "@/lib/adminCookies";
 
 export async function POST(req: NextRequest) {
   try {
-    const ip   = req.headers.get("x-forwarded-for") ?? "127.0.0.1";
+    const ip   = req.headers.get("x-real-ip") ?? "127.0.0.1";
     const body = AdminLoginSchema.parse(await req.json());
     const { token, admin } = await adminService.login(body, ip);
     const res = NextResponse.json({ success: true, data: { admin } });

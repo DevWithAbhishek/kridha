@@ -1,165 +1,134 @@
 import { NextRequest, NextResponse } from "next/server";
 import crypto from "crypto";
 import { prisma } from "@/lib/db";
-import { notificationService } from "@/services/notification.service";
-import { validateTransition } from "@/lib/state-machine";
 import { logger } from "@/lib/logger";
+import * as Sentry from "@sentry/nextjs";
+import { withLogger } from "@/lib/withLogger";
+import { handleError } from "@/lib/handleError";
+import { paymentService } from "@/services/payment.service";
 
-// ALWAYS returns 200 — Razorpay retries on any non-200 (causes double-processing)
+// Razorpay sends raw body - must not parse as JSON before verifying
 // Four rules: always 200, HMAC verify first, idempotency check, atomic transaction
-export async function POST(req: NextRequest) {
+export const POST = withLogger(async (req: NextRequest) => {
   try {
-    const rawBody = await req.text(); // must read as text BEFORE parsing for HMAC
-    const sign = req.headers.get("x-razorpay-signature") ?? "";
+    const rawBody = await req.text(); // raw text, not req.json()
+    const signature = req.headers.get("x-razorpay-signature") ?? "";
+    console.log("Webhook Request: ", req)
 
-    // Rule 2:  HMAC signature verification
-    const expected = crypto
+    // Step 1: Verify HMAC signature
+    const expectedSignature = crypto
       .createHmac("sha256", process.env.RAZORPAY_WEBHOOK_SECRET!)
       .update(rawBody)
       .digest("hex");
 
-    if (!crypto.timingSafeEqual(Buffer.from(sign), Buffer.from(expected))) {
-      console.error("[WEBHOOK] Bad signature - ignoring");
-      return NextResponse.json({ received: true }); // Rule 1: still 200
+    const isValid = crypto.timingSafeEqual(
+      Buffer.from(signature),
+      Buffer.from(expectedSignature),
+    );
+
+    if (!isValid) {
+      logger.warn(
+        {
+          event: "webhook.signature_invalid",
+        },
+        "invalid Razorpay signature",
+      );
+      return NextResponse.json({ received: true }); // still return 200 to avoid retries
     }
 
     const payload = JSON.parse(rawBody);
     const event = payload.event as string;
-    const paymentId = payload.payload?.payment?.entity?.id as
-      | string
-      | undefined;
+
+    logger.info(
+      {
+        event: "webhook.received",
+        razorpayEvent: event,
+      },
+      "webhook received",
+    );
+
+    // Step 2: Idempotency Check (Extract paymentId from whichever event type)
+    const paymentId =
+      payload.payload?.payment?.entity?.id ??
+      payload.payload?.payment_link?.entity?.payments?.[0]?.payment?.entity
+        ?.id ??
+      null;
+
     if (!paymentId) {
       return NextResponse.json({ received: true }); // unstructured event — ignore
     }
 
-    // Rule 3: IDEMPOTENCY check (INV - 03)
-    const seen = await prisma.webhookLog.findUnique({
-      where: {
-        razorpayPaymentId: paymentId,
-      },
-    });
-    if (seen) {
-      return NextResponse.json({ received: true }); // already processed
+    if (paymentId) {
+      const existing = await prisma.webhookLog.findUnique({
+        where: { razorpayPaymentId: paymentId },
+      });
+
+      if (existing) {
+        logger.info(
+          {
+            event: "webhook_duplicates",
+            paymentId,
+          },
+          "duplicate webhook - already processed",
+        );
+        return NextResponse.json({ received: true }); // already processed
+      }
     }
 
-    if (event === "payment.captured") {
-      const rzOrderId = payload.payload.payment.entity.order_id as string;
-      const sub = await prisma.subOrder.findFirst({
-        where: { razorpayAdvanceId: rzOrderId },
-      });
+    // Step 3: Route Handler
+    try {
+      switch (event) {
+        case "payment.captured":
+          await paymentService.handlePaymentCaptured(payload, paymentId);
+          break;
 
-      if (sub) {
-        const otp = Math.floor(1000 + Math.random() * 9000).toString();
+        case "payment.failed":
+          await paymentService.handlePaymentFailed(payload);
+          break;
 
-        // Rule 4: atomic - log + status change in one transaction
-        await prisma.$transaction([
-          prisma.webhookLog.create({
-            data: {
-              razorpayPaymentId: paymentId,
-              eventType: event,
-              subOrderId: sub?.id,
+        case "payment_link.paid":
+          await paymentService.handlePaymentLinkPaid(payload, paymentId);
+          break;
+
+        case "payment_link.expired":
+          await paymentService.handlePaymentLinkExpired(payload);
+          break;
+
+        case "refund.processed":
+          await paymentService.handleRefundProcessed(payload);
+          break;
+
+        case "refund.failed":
+          await paymentService.handleRefundFailed(payload);
+          break;
+
+        case "payment.dispute.created":
+          await paymentService.handleDisputeCreated(payload);
+          break;
+
+        case "payment.dispute.won":
+        case "payment.dispute.lost":
+          await paymentService.handleDisputeResolved(payload, event);
+          break;
+
+        default:
+          logger.info(
+            {
+              event: "webhook.unhandled",
+              RazorpayEvent: event,
             },
-          }),
-          prisma.subOrder.update({
-            where: { id: sub.id },
-            data: {
-              status: "CONFIRMED",
-              deliveryOtp: otp,
-            },
-          }),
-          prisma.orderStatusHistory.create({
-            data: {
-              subOrderId: sub.deliveryOtp,
-              orderId: sub.orderId,
-              fromStatus: "PENDING",
-              toStatus: "CONFIRMED",
-            },
-          }),
-          prisma.payment.updateMany({
-            where: { subOrderId: sub.id },
-            data: {
-              status: "PAID",
-              razorpayPaymentId: paymentId,
-            },
-          }),
-        ]);
-        // Notifications outside transaction — fire and forget
-        notificationService.orderConfirmed(sub.id, otp).catch(console.error);
-      } else {
-        // Log even if SubOrder not found — for debugging
-        await prisma.webhookLog.create({
-          data: {
-            razorpayPaymentId: paymentId,
-            eventType: event,
-          },
-        });
+            "unhandled event",
+          );
       }
-    } else if (event === "payment_link.paid") {
-      const linkId = payload.payload?.payment_link?.entity?.id as string;
-      const sub = await prisma.subOrder.findFirst({
-        where: {
-          paymentLinkId: linkId,
-        },
-      });
-
-      if (sub) {
-        validateTransition(sub.status, "READY_FOR_OTP_VERIFICATION");
-        await prisma.$transaction([
-          prisma.webhookLog.create({
-            data: {
-              razorpayPaymentId: paymentId,
-              eventType: event,
-              subOrderId: sub.id,
-            },
-          }),
-          prisma.subOrder.update({
-            where: { id: sub.id },
-            data: {
-              status: "READY_FOR_OTP_VERIFICATION",
-            },
-          }),
-          prisma.orderStatusHistory.create({
-            data: {
-              subOrderId: sub.id,
-              orderId: sub.orderId,
-              fromStatus: "AWAITING_PAYMENT",
-              toStatus: "READY_FOR_OTP_VERIFICATION",
-            },
-          }),
-          prisma.payment.create({
-            data: {
-              subOrderId: sub.id,
-              type: "REMAINING",
-              status: "PAID",
-              amount: sub.remainingAmount,
-              razorpayPaymentId: paymentId,
-            },
-          }),
-        ]);
-        notificationService.readyForOtp(sub.id).catch(console.error);
-      } else {
-        // Log even if SubOrder not found — for debugging
-        await prisma.webhookLog.create({
-          data: {
-            razorpayPaymentId: paymentId,
-            eventType: event,
-          },
-        });
-      }
-    } else {
-      // Log unhandled events — return 200 (do not error)
-      await prisma.webhookLog.create({
-        data: {
-          razorpayPaymentId: paymentId,
-          eventType: event,
-        },
-      });
+    } catch (err) {
+      // Log and alert but still return 200
+      // Returning 500 causes Razorpay to retry - creates duplicate processing risk
+      logger.error({ err, event, paymentId }, "webhook hanlder error");
+      Sentry.captureException(err);
     }
+
+    return NextResponse.json({ received: true });
   } catch (err) {
-    logger.error(
-      { err, action: "webhook.razorpay" },
-      "Webhook processing error",
-    );
+    return handleError(err);
   }
-  return NextResponse.json({ received: true }); // Rule 1: always 200
-}
+}, "webhook.razorpay");

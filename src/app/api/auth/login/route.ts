@@ -5,12 +5,10 @@ import { authService } from "@/services/auth.service";
 import { setAuthCookies } from "@/lib/cookies";
 import { withLogger } from "@/lib/withLogger";
 
-export const POST = withLogger(async (req: NextRequest) =>  {
+export const POST = withLogger(async (req: NextRequest) => {
   try {
     const body = LoginSchema.parse(await req.json());
-    const ip = req.headers.get("x-real-ip")
-      ?? req.headers.get("x-forwarded-for")?.split(",")[0].trim()
-      ?? "unknown";
+    const ip = req.headers.get("x-real-ip") ?? "unknown";
     const ua = req.headers.get("user-agent") ?? "";
     // Wrap only the DB-touching service call
     const result = await authService.login(body, ip, ua);
@@ -23,4 +21,4 @@ export const POST = withLogger(async (req: NextRequest) =>  {
   } catch (err) {
     return handleError(err);
   }
-}, "auth.login")
+}, "auth.login");

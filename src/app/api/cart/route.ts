@@ -34,9 +34,7 @@ export async function POST(req: NextRequest) {
       {
         success: true,
         message: "Item added to cart.",
-        data: {
-          cartItem,
-        },
+        data: cartItem
       },
       { status: 201 },
     );

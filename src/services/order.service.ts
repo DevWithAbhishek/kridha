@@ -8,6 +8,7 @@ import { calcRefundAmount } from "@/lib/refund";
 import { GetOrdersInput } from "@/schemas";
 import { orderRepo } from "@/repo/order.repo";
 import { OrderStatus } from "@prisma/client";
+import { istTimeToUTCDate } from "@/lib/time";
 
 export interface CreateItem {
   productId: string;
@@ -144,11 +145,11 @@ export const orderService = {
         const window = await tx.pickupWindow.findUnique({
           where: { id: sellerItems[0].pickupWindowId },
         });
-        const [endH, endM] = (window?.endTime ?? "23:59")
-          .split(":")
-          .map(Number);
-        const pickupDeadline = new Date(sellerItems[0].pickUpDate);
-        pickupDeadline.setHours(endH, endM, 0, 0);
+        const endTime = window?.endTime ?? "23:59";
+        const pickupDeadline = istTimeToUTCDate(
+          endTime,
+          sellerItems[0].pickUpDate,
+        );
 
         subOrderData.push({
           sellerId,

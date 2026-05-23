@@ -446,7 +446,7 @@ export const AddItemToCartSchema = z
       today.setHours(0, 0, 0, 0);
       const pickup = new Date(data.pickupDate);
       pickup.setHours(0, 0, 0, 0);
-      return pickup > today;
+      return pickup >= today;
     },
     {
       message: "Pickup date must be in the future",

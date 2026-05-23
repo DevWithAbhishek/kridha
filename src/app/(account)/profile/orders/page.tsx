@@ -17,6 +17,17 @@ import { api } from "@/lib/api";
 import { useLangStore } from "@/stores/langStore";
 import type { OrderStatus } from "@/types/dashboard";
 
+function formatPickupDate(dateStr: string, lang: string): string {
+  // Extract just the date part to avoid timezone issues
+  const dateOnly = dateStr.slice(0, 10); // "2026-05-23"
+  const [year, month, day] = dateOnly.split("-").map(Number);
+  const d = new Date(year, month - 1, day); // local midnight — no UTC shift
+  return d.toLocaleDateString(lang === "hi" ? "hi-IN" : "en-IN", {
+    day: "numeric",
+    month: "short",
+  });
+}
+
 const STATUS_CONFIG = {
   PENDING: {
     l: "Pending",
@@ -287,12 +298,8 @@ export default function BuyerOrdersPage() {
               <div className="flex items-center justify-between flex-wrap gap-2 text-label-xs text-muted-DEFAULT dark:text-muted-dark">
                 <span className="flex items-center gap-1">
                   <Clock className="w-3 h-3" />
-                  {new Date(order.pickupDate).toLocaleDateString("en-IN", {
-                    day: "numeric",
-                    month: "short",
-                  })}{" "}
-                  · {order.pickupWindow?.startTime}–
-                  {order.pickupWindow?.endTime}
+                  {formatPickupDate(order.pickupDate, lang)} ·{" "}
+                  {order.pickupWindow?.startTime}–{order.pickupWindow?.endTime}
                 </span>
                 <span className="font-bold text-label-md text-kridha-primary">
                   ₹{order.totalAmount.toLocaleString("en-IN")}

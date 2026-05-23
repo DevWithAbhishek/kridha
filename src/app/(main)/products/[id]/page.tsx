@@ -1,5 +1,5 @@
 "use client";
-import { useState, useMemo, use } from "react";
+import { useState, useMemo, use, useEffect } from "react";
 import Image from "next/image";
 import Link from "next/link";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
@@ -29,7 +29,7 @@ import { useLangStore } from "@/stores/langStore";
 import { Button } from "@/components/ui/Button";
 import { ProductWithRelations } from "@/repo/product.repo";
 import { calcUnitPrice } from "@/lib/pricing";
-import { Review, DAYS_MAP} from "@/types/dashboard";
+import { Review, DAYS_MAP } from "@/types/dashboard";
 
 // ── Types ─────────────────────────────────────────────────────────────────
 
@@ -39,7 +39,6 @@ interface CartItem {
   pickupWindowId: string;
   pickupDate: string;
 }
-
 
 // ── Deal countdown ─────────────────────────────────────────────────────────
 function DealCountdown({ expiresAt }: { expiresAt: Date }) {
@@ -125,18 +124,18 @@ function QtyStep({
     <div className="flex items-center gap-0">
       <button
         type="button"
-        onClick={() => onChange(Math.max(min, value - step))}
+        onClick={() => onChange(Math.round(Math.max(min, value - step)))}
         disabled={value <= min}
         className="w-11 h-11 flex items-center justify-center rounded-l-xl border border-border-DEFAULT dark:border-border-dark bg-gray-50 dark:bg-gray-800 hover:bg-gray-100 dark:hover:bg-gray-700 disabled:opacity-40 transition-colors text-[var(--color-text)]"
       >
         <Minus className="w-4 h-4" />
       </button>
       <div className="w-16 h-11 flex items-center justify-center border-t border-b border-border-DEFAULT dark:border-border-dark bg-[var(--color-surface)] dark:bg-surface-dark text-label-md font-bold text-[var(--color-text)]">
-        {value}
+        {Math.round(value)}
       </div>
       <button
         type="button"
-        onClick={() => onChange(Math.min(max, value + step))}
+        onClick={() => onChange(Math.round(Math.max(min, value - step)))}
         disabled={value >= max}
         className="w-11 h-11 flex items-center justify-center rounded-r-xl border border-border-DEFAULT dark:border-border-dark bg-gray-50 dark:bg-gray-800 hover:bg-gray-100 dark:hover:bg-gray-700 disabled:opacity-40 transition-colors text-[var(--color-text)]"
       >
@@ -194,15 +193,22 @@ export default function ProductDetailPage({
   const [selectedImg, setSelectedImg] = useState(0);
   const [qty, setQty] = useState<number | null>(null); // null = uninitialized
   const [selectedWin, setSelectedWin] = useState<string>("");
+
   const [pickupDate, setPickupDate] = useState(() => {
-    const d = new Date();
-    d.setDate(d.getDate() + 1);
-    return d.toISOString().slice(0, 10);
+    const now = new Date();
+    const hour = now.getHours();
+    if (hour < 19) {
+      return now.toISOString().slice(0, 10);
+    }
+    const tomorrow = new Date(now);
+    tomorrow.setDate(now.getDate() + 1);
+    return tomorrow.toISOString().slice(0, 10);
   });
+
   const [reviewPage, setReviewPage] = useState(1);
   const [descExpanded, setDescExpanded] = useState(false);
-  const [isFaved, setIsFaved] = useState(false);
-  const [addedToCart, setAddedToCart] = useState(false);
+
+  const [cartItemId, setCartItemId] = useState<string | null>(null);
   const [cartError, setCartError] = useState("");
 
   // ── Fetch product ─────────────────────────────────────────────────────
@@ -212,18 +218,15 @@ export default function ProductDetailPage({
     isError,
   } = useQuery<ProductWithRelations>({
     queryKey: ["product-detail", id],
-    queryFn: () =>
-      api
-        .get(`/products/${id}`)
-        .then((r) => r.data.data),
+    queryFn: () => api.get(`/products/${id}`).then((r) => r.data.data),
     staleTime: 5 * 60 * 1000,
     gcTime: 10 * 60 * 1000,
     retry: 2,
   });
 
   // Initialize qty and window once product loads
-  const initialQty = product?.minOrderQuantity ?? 1;
-  const effectiveQty = qty ?? initialQty;
+  const initialQty = Math.round(product?.minOrderQuantity ?? 1);
+  const effectiveQty = Math.round(qty ?? initialQty);
   const effectiveWin = selectedWin || product?.pickupWindows?.[0]?.id || "";
 
   // ── Price calculation ─────────────────────────────────────────────────
@@ -252,25 +255,67 @@ export default function ProductDetailPage({
   // ── Add to cart mutation ──────────────────────────────────────────────
   const addToCart = useMutation({
     mutationFn: (item: CartItem) => api.post("/cart", item),
-    onSuccess: () => {
-      setAddedToCart(true);
+    onSuccess: (res) => {
+      setCartItemId(res.data.data.id);
       setCartError("");
       qc.invalidateQueries({ queryKey: ["cart"] });
-      setTimeout(() => setAddedToCart(false), 3000);
     },
     onError: (e) => {
-      const ex = e as { response?: { data?: { message?: string } } };
-      setCartError(ex.response?.data?.message ?? "Failed to add to cart");
+      const ex = e as {
+        response?: { data?: { message?: string; code?: string } };
+      };
+      const code = ex.response?.data?.code;
+      if (code === "INSUFFICIENT_STOCK") {
+        setCartError("Not enough stock available");
+      } else if (code === "INVALID_PICKUP_DATE") {
+        setCartError(
+          "This date is not available for pickup. Check available days below.",
+        );
+      } else {
+        setCartError(ex.response?.data?.message ?? "Failed to add to cart");
+      }
     },
   });
 
-  // ── Favorite mutation ─────────────────────────────────────────────────
+  const { data: savedCheck } = useQuery({
+    queryKey: ["saved-check", id],
+    queryFn: () =>
+      api.get(`/saved?productId=${id}`).then((r) => ({
+        isSaved: r.data.data?.isSaved ?? false,
+        savedId: r.data.data?.savedId ?? null,
+      })),
+    staleTime: 5 * 60 * 1000,
+    enabled: !!id,
+  });
+
+  const [isFaved, setIsFaved] = useState(false);
+  const [savedProductId, setSavedProductId] = useState<string | null>(null);
+
+  // Sync when query loads (use useEffect)
+  useEffect(() => {
+    if (savedCheck) {
+      setIsFaved(savedCheck.isSaved);
+      setSavedProductId(savedCheck.savedId);
+    }
+  }, [savedCheck]);
+
   const toggleFav = useMutation({
-    mutationFn: () =>
-      isFaved
-        ? api.delete(`/saved/${id}`)
-        : api.post("/saved", { productId: id, type: "FAVOURITE" }),
-    onSuccess: () => setIsFaved((p) => !p),
+    mutationFn: () => {
+      if (isFaved && savedProductId) {
+        return api.delete(`/saved/${savedProductId}`); // uses SavedProduct.id
+      }
+      return api.post("/saved", { productId: id, type: "FAVOURITE" });
+    },
+    onSuccess: (res) => {
+      if (!isFaved) {
+        // Just saved — store the new savedProduct.id for future delete
+        setSavedProductId(res.data.data?.id ?? null);
+      } else {
+        setSavedProductId(null);
+      }
+      setIsFaved((p) => !p);
+      qc.invalidateQueries({ queryKey: ["saved-check", id] });
+    },
     onError: () => {},
   });
 
@@ -343,6 +388,32 @@ export default function ProductDetailPage({
   const hasDiscount = !!product.dealDiscountPercent;
   const isOutOfStock = product.available === 0;
   const maxQty = product.maxOrderQuantity ?? product.available;
+
+  function handleQtyChange(newQty: number) {
+    setQty(Math.round(newQty));
+    setCartItemId(null); // must re-add if qty changes
+    setCartError("");
+  }
+
+  function handleWindowChange(windowId: string) {
+    setSelectedWin(windowId);
+    setCartItemId(null); // must re-add if window changes
+    setCartError("");
+  }
+
+  function isWindowExpiredToday(
+    window: { endTime: string },
+    selectedDate: string,
+  ): boolean {
+    const todayStr = new Date().toISOString().slice(0, 10);
+    if (selectedDate !== todayStr) return false;
+
+    const now = new Date();
+    const [endH, endM] = window.endTime.split(":").map(Number);
+    const windowEnd = new Date();
+    windowEnd.setHours(endH, endM, 0, 0);
+    return now >= windowEnd;
+  }
 
   return (
     <div className="bg-background-DEFAULT dark:bg-background-dark min-h-screen">
@@ -548,7 +619,7 @@ export default function ProductDetailPage({
                   min={product.minOrderQuantity}
                   max={maxQty}
                   step={product.unitIncrement}
-                  onChange={setQty}
+                  onChange={handleQtyChange}
                 />
                 <p className="text-label-xs text-muted-DEFAULT dark:text-muted-dark">
                   Min: {product.minOrderQuantity} {product.unit.toLowerCase()}
@@ -563,7 +634,7 @@ export default function ProductDetailPage({
                   {lang === "hi" ? "Pickup Window" : "Pickup Window"}
                 </p>
                 <div className="grid gap-2">
-                  {product.pickupWindows!.map((w) => (
+                  {/* {product.pickupWindows!.map((w) => (
                     <label
                       key={w.id}
                       className={`flex items-center gap-3 p-3 rounded-xl border-2 cursor-pointer transition-all ${effectiveWin === w.id ? "border-kridha-primary bg-kridha-secondary dark:bg-kridha-primary/10" : "border-border-DEFAULT dark:border-border-dark hover:border-kridha-primary/50"}`}
@@ -573,7 +644,7 @@ export default function ProductDetailPage({
                         name="window"
                         value={w.id}
                         checked={effectiveWin === w.id}
-                        onChange={() => setSelectedWin(w.id)}
+                        onChange={(e) => handleWindowChange(e.target.value)}
                         className="sr-only"
                       />
                       <div className="flex-1 min-w-0">
@@ -598,7 +669,67 @@ export default function ProductDetailPage({
                         <CheckCircle2 className="w-4 h-4 text-kridha-primary flex-shrink-0" />
                       )}
                     </label>
-                  ))}
+                  ))} */}
+                  {product.pickupWindows!.map((w) => {
+                    const expired = isWindowExpiredToday(w, pickupDate);
+                    return (
+                      <label
+                        key={w.id}
+                        className={`flex items-center gap-3 p-3 rounded-xl border-2 transition-all
+        ${
+          expired
+            ? "opacity-40 cursor-not-allowed border-border-DEFAULT dark:border-border-dark"
+            : "cursor-pointer"
+        }
+        ${
+          !expired && effectiveWin === w.id
+            ? "border-kridha-primary bg-kridha-secondary dark:bg-kridha-primary/10"
+            : !expired
+              ? "border-border-DEFAULT dark:border-border-dark hover:border-kridha-primary/50"
+              : ""
+        }`}
+                      >
+                        <input
+                          type="radio"
+                          name="window"
+                          value={w.id}
+                          checked={effectiveWin === w.id}
+                          disabled={expired}
+                          onChange={(e) =>
+                            !expired && handleWindowChange(e.target.value)
+                          }
+                          className="sr-only"
+                        />
+                        <div className="flex-1 min-w-0">
+                          <p className="font-semibold text-label-sm text-[var(--color-text)]">
+                            {lang === "hi" ? w.labelHi : w.labelEn}
+                            {expired && (
+                              <span className="ml-2 text-label-xs text-muted-DEFAULT dark:text-muted-dark font-normal">
+                                (Passed)
+                              </span>
+                            )}
+                          </p>
+                          <p className="text-label-xs text-muted-DEFAULT dark:text-muted-dark">
+                            {w.startTime} – {w.endTime}
+                          </p>
+                          <div className="flex gap-1 mt-1 flex-wrap">
+                            {w.daysActive.map((d) => (
+                              <span
+                                key={d}
+                                className="text-[10px] px-1.5 py-0.5 bg-gray-100 dark:bg-gray-800 rounded font-medium text-muted-DEFAULT dark:text-muted-dark"
+                              >
+                                {DAYS_MAP[d]?.[lang === "hi" ? "hi" : "en"] ??
+                                  d}
+                              </span>
+                            ))}
+                          </div>
+                        </div>
+                        {!expired && effectiveWin === w.id && (
+                          <CheckCircle2 className="w-4 h-4 text-kridha-primary flex-shrink-0" />
+                        )}
+                      </label>
+                    );
+                  })}
                 </div>
               </div>
             )}
@@ -609,56 +740,155 @@ export default function ProductDetailPage({
                 <Calendar className="w-4 h-4 text-kridha-primary" />
                 {lang === "hi" ? "Pickup Date" : "Pickup Date"}
               </p>
+              {effectiveWin &&
+                product.pickupWindows &&
+                (() => {
+                  const win = product.pickupWindows.find(
+                    (w) => w.id === effectiveWin,
+                  );
+                  if (!win) return null;
+                  const dayNames = [
+                    "",
+                    "Mon",
+                    "Tue",
+                    "Wed",
+                    "Thurs",
+                    "Fri",
+                    "Sat",
+                    "Sun",
+                  ];
+                  const activeDayNames = win.daysActive
+                    .map((d) => dayNames[d])
+                    .join(",");
+                  return (
+                    <p className="text-label-xs text-muted-DEFAULT dark:text-muted-dark mb-2">
+                      Available: {activeDayNames}
+                    </p>
+                  );
+                })()}
               <input
                 type="date"
                 value={pickupDate}
-                min={new Date(Date.now() + 86400000).toISOString().slice(0, 10)}
-                onChange={(e) => setPickupDate(e.target.value)}
-                className="w-full px-4 py-3 rounded-xl border border-border-DEFAULT dark:border-border-dark bg-[var(--color-surface)] dark:bg-surface-dark text-[var(--color-text)] text-label-sm outline-none focus:border-kridha-primary focus:ring-2 focus:ring-kridha-primary/20 transition-all"
+                onChange={(e) => {
+                  const newDate = e.target.value;
+                  setPickupDate(newDate);
+                  setCartItemId(null);
+                  setCartError("");
+
+                  // Clear selected window if it's now expired for the new date
+                  if (selectedWin && product?.pickupWindows) {
+                    const win = product.pickupWindows.find(
+                      (w) => w.id === selectedWin,
+                    );
+                    if (win && isWindowExpiredToday(win, newDate)) {
+                      setSelectedWin("");
+                    }
+                  }
+                }}
+                min={new Date().toISOString().slice(0, 10)}
+                max={(() => {
+                  const d = new Date();
+                  d.setDate(d.getDate() + 30);
+                  return d.toISOString().slice(0, 10);
+                })()}
+                className="w-full px-3 py-2.5 rounded-xl border border-border-DEFAULT dark:border-border-dark bg-[var(--color-surface)] dark:bg-surface-dark text-label-sm text-[var(--color-text)] focus:outline-none focus:ring-2 focus:ring-kridha-primary/30"
               />
+              {pickupDate === new Date().toISOString().slice(0, 10) &&
+                new Date().getHours() >= 19 && (
+                  <p className="text-label-xs text-amber-600 dark:text-amber-400">
+                    ⚠️ It's late — confirm the seller still accepts same-day
+                    pickup.
+                  </p>
+                )}
             </div>
 
-            {/* Cart error */}
-            {cartError && (
-              <div className="flex items-start gap-2 px-4 py-3 bg-red-50 dark:bg-red-950/20 border border-red-200 dark:border-red-800 rounded-xl text-label-sm text-error">
-                <AlertCircle className="w-4 h-4 flex-shrink-0 mt-0.5" />
-                {cartError}
-              </div>
-            )}
+            {/* ── Add to cart / in cart state ────────────────────────────────────── */}
+            <div className="space-y-3">
+              {cartError && (
+                <div className="flex items-center gap-2 px-4 py-3 rounded-xl bg-red-50 dark:bg-red-950/20 border border-red-200 dark:border-red-800 text-red-700 dark:text-red-400 text-label-sm">
+                  <AlertCircle className="w-4 h-4 flex-shrink-0" />
+                  {cartError}
+                </div>
+              )}
 
-            {/* Action buttons */}
-            <div className="flex gap-3">
-              <Button
-                type="button"
-                variant="primary"
-                size="lg"
-                className="flex-1"
-                disabled={isOutOfStock || addToCart.isPending}
-                loading={addToCart.isPending}
-                onClick={handleAddToCart}
-              >
-                {addedToCart ? (
-                  <>
-                    <CheckCircle2 className="w-4 h-4" />
-                    {lang === "hi" ? "Cart में जोड़ा!" : "Added to cart!"}
-                  </>
-                ) : (
-                  <>
+              {cartItemId ? (
+                // Fix 4: persistent "in cart" state — does not disappear
+                <div className="space-y-2">
+                  <div className="flex items-center gap-2 px-4 py-3 rounded-xl bg-green-50 dark:bg-green-950/20 border border-green-200 dark:border-green-800 text-green-700 dark:text-green-400 text-label-sm font-semibold">
+                    <CheckCircle2 className="w-4 h-4 flex-shrink-0" />
+                    Added to cart!
+                  </div>
+                  <div className="flex gap-2">
+                    <Button
+                      variant="outline"
+                      size="md"
+                      className="flex-1"
+                      onClick={async () => {
+                        if (cartItemId) {
+                          try {
+                            await api.delete(`/cart/${cartItemId}`);
+                          } catch {
+                            /* ignore — item may already be gone */
+                          }
+                        }
+                        setCartItemId(null);
+                        setCartError("");
+                      }}
+                    >
+                      Change Selection
+                    </Button>
+                    <Link href="/cart" className="flex-1">
+                      <Button variant="primary" size="md" className="w-full">
+                        <ShoppingCart className="w-4 h-4" />
+                        View Cart
+                      </Button>
+                    </Link>
+                  </div>
+                </div>
+              ) : (
+                <div className="flex gap-3">
+                  {/* Favourite */}
+                  <button
+                    type="button"
+                    onClick={() => toggleFav.mutate()}
+                    disabled={toggleFav.isPending}
+                    className={`p-3 rounded-xl border transition-all flex-shrink-0 ${
+                      isFaved
+                        ? "bg-red-50 dark:bg-red-950/20 border-red-200 dark:border-red-800 text-red-500"
+                        : "border-border-DEFAULT dark:border-border-dark text-muted-DEFAULT dark:text-muted-dark hover:border-red-300 dark:hover:border-red-700 hover:text-red-500"
+                    }`}
+                    aria-label={isFaved ? "Remove from saved" : "Save product"}
+                  >
+                    <Heart
+                      className={`w-5 h-5 ${isFaved ? "fill-current" : ""}`}
+                    />
+                  </button>
+
+                  {/* Add to cart */}
+                  <Button
+                    variant="primary"
+                    size="md"
+                    className="flex-1"
+                    onClick={handleAddToCart}
+                    disabled={
+                      isOutOfStock ||
+                      !effectiveWin ||
+                      !pickupDate ||
+                      addToCart.isPending
+                    }
+                    loading={addToCart.isPending}
+                  >
                     <ShoppingCart className="w-4 h-4" />
-                    {lang === "hi" ? "Cart में जोड़ें" : "Add to cart"}
-                  </>
-                )}
-              </Button>
-              <button
-                type="button"
-                onClick={() => toggleFav.mutate()}
-                className={`w-14 h-14 flex items-center justify-center rounded-xl border-2 transition-all ${isFaved ? "bg-red-50 dark:bg-red-950/20 border-red-400 dark:border-red-600 text-red-500" : "border-border-DEFAULT dark:border-border-dark text-muted-DEFAULT hover:border-red-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-950/20"}`}
-                aria-label={
-                  isFaved ? "Remove from favorites" : "Add to favorites"
-                }
-              >
-                <Heart className={`w-5 h-5 ${isFaved ? "fill-current" : ""}`} />
-              </button>
+                    {isOutOfStock
+                      ? "Out of Stock"
+                      : addToCart.isPending
+                        ? "Adding..."
+                        : lang === "hi"
+                          ? "कार्ट में जोड़ें"
+                          : "Add to Cart"}
+                  </Button>
+                </div>
+              )}
             </div>
 
             {/* Seller card */}

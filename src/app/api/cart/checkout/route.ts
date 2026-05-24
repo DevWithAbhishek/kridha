@@ -1,5 +1,6 @@
 import { prisma } from "@/lib/db";
 import { ERR } from "@/lib/errors";
+import { releaseExpiredHoldsForProduct } from "@/lib/expiry";
 import { getUser } from "@/lib/get-user";
 import { handleError } from "@/lib/handleError";
 import { orderService } from "@/services/order.service";
@@ -11,8 +12,16 @@ export async function POST(req: NextRequest) {
 
     const cart = await prisma.cartSession.findFirst({
       where: { userId: user.userId, expiresAt: { gt: new Date() } },
+      include: { cartItems: true },
     });
     if (!cart) throw ERR.CART_EMPTY;
+
+    // Release any expired holds on products in this cart
+    // before attempting to lock stock for the new order
+    const productIds = cart.cartItems.map((ci) => ci.productId);
+    await Promise.all(
+      productIds.map((id) => releaseExpiredHoldsForProduct(id)),
+    );
 
     const result = await orderService.createFromCart(user.userId, cart.id);
 

@@ -53,7 +53,9 @@ const dummyDeals: Deal[] = [
 
 export function DealsSection() {
     const t = useTranslations('deals');
-    const { data: deals, loading } = useFetch<Deal[]>('/api/products/deals', dummyDeals);
+    const lat = 26.71308;
+    const lng = 83.330057;
+    const { data: deals, loading } = useFetch<Deal[]>(`/api/products/deals?lat=${lat}&lng=${lng}`, dummyDeals);
 
     return (
         <section className="bg-[var(--color-surface)] dark:bg-gray-900 py-section-y">

@@ -8,6 +8,16 @@ import {
 import type { GetProductsInput, GetSellerProductsInput } from "@/schemas";
 import { Product } from "@prisma/client";
 import { PriceTier } from "@/types/dashboard";
+import { logger } from "@/lib/logger";
+import {
+  withCache,
+  cacheSet,
+  cacheGet,
+  cacheInvalidate,
+  CK,
+  TTL,
+} from "@/lib/redis";
+import { releaseAllExpiredPendingOrders } from "@/lib/expiry";
 
 // ---------------------------------------------------------------------------
 // Typed result of the raw PostGIS query
@@ -38,6 +48,59 @@ export interface ProductWithRelations extends ProductRow {
     endTime: string;
     daysActive: number[];
   }>;
+}
+
+async function releaseExpiredPendingOrders(): Promise<void> {
+  const cutoff = new Date(Date.now() - 15 * 60_000);
+
+  // Find all PENDING suborders older than 15 min with no successful payment
+  const stale = await prisma.subOrder.findMany({
+    where: {
+      status: "PENDING",
+      createdAt: { lt: cutoff },
+      payments: { none: { status: "PAID" } },
+    },
+    include: { orderItems: true },
+  });
+
+  if (!stale.length) return;
+
+  // Release each in its own transaction - one failure doesn't block others
+  await Promise.all(
+    stale.map((sub) =>
+      prisma
+        .$transaction([
+          prisma.subOrder.update({
+            where: { id: sub.id },
+            data: {
+              status: "CANCELLED",
+              cancelledAt: new Date(),
+              cancellationReason: "Auto-expired: payment timeout",
+            },
+          }),
+
+          prisma.orderStatusHistory.create({
+            data: {
+              subOrderId: sub.id,
+              orderId: sub.orderId,
+              fromStatus: "PENDING",
+              toStatus: "CANCELLED",
+              note: "Auto-expired: advance not paid within 15 minutes",
+            },
+          }),
+
+          ...sub.orderItems.map((oi) =>
+            prisma.product.update({
+              where: { id: oi.productId },
+              data: { available: { increment: oi.quantity } },
+            }),
+          ),
+        ])
+        .catch(() => {
+          logger.warn({ subOrderId: sub.id }, "expiry release failed silently");
+        }),
+    ),
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -148,30 +211,58 @@ export const productRepo = {
     const offset = (safePage - 1) * safeLimit;
     const radiusM = (input.radius ?? 10) * 1000;
 
-    const filters: NearbyFilters = {
-      lat: input.lat,
-      lng: input.lng,
-      radiusM,
-      category: input.category,
-      isBranded: input.isBranded,
-      dealActive: input.dealActive,
-      q: input.q,
-      excludeSellerId,
-      minPrice: input.minPrice,
-      maxPrice: input.maxPrice,
-      sortBy: input.sortBy as NearbyFilters["sortBy"],
-      limit: safeLimit,
-      offset,
-    };
+    // ── Cache key: round lat/lng to 3dp so nearby users share cache ─────
+    const cacheKey = CK.productList(
+      input.lat,
+      input.lng,
+      input.radius ?? 10,
+      safePage,
+      {
+        category: input.category,
+        isBranded: input.isBranded,
+        dealActive: input.dealActive,
+        q: input.q,
+        sortBy: input.sortBy,
+        minPrice: input.minPrice,
+        maxPrice: input.maxPrice,
+        excludeSellerId,
+      },
+    );
 
-    const whereClause = buildWhereClause(filters);
+    // ── Lazy expiry: release expired holds before counting stock ─────────
+    // Fire-and-forget — never block the response
+    await releaseAllExpiredPendingOrders().catch(() => {});
 
-    const orderClause = buildOrderClause(filters.sortBy, input.lat, input.lng);
+    // ── Cache-aside ───────────────────────────────────────────────────────
+    return withCache(cacheKey, TTL.PRODUCT_LIST, async () => {
+      const filters: NearbyFilters = {
+        lat: input.lat,
+        lng: input.lng,
+        radiusM,
+        category: input.category,
+        isBranded: input.isBranded,
+        dealActive: input.dealActive,
+        q: input.q,
+        excludeSellerId,
+        minPrice: input.minPrice,
+        maxPrice: input.maxPrice,
+        sortBy: input.sortBy as NearbyFilters["sortBy"],
+        limit: safeLimit,
+        offset,
+      };
 
-    // -----------------------------------------------------------------------
-    // DATA QUERY
-    // -----------------------------------------------------------------------
-    const dataQuery = Prisma.sql`
+      const whereClause = buildWhereClause(filters);
+
+      const orderClause = buildOrderClause(
+        filters.sortBy,
+        input.lat,
+        input.lng,
+      );
+
+      // -----------------------------------------------------------------------
+      // DATA QUERY
+      // -----------------------------------------------------------------------
+      const dataQuery = Prisma.sql`
   SELECT
     p.*,
     ST_Distance(
@@ -208,10 +299,10 @@ export const productRepo = {
   ${orderClause}
   LIMIT ${safeLimit} OFFSET ${offset}
 `;
-    // -----------------------------------------------------------------------
-    // COUNT QUERY
-    // -----------------------------------------------------------------------
-    const countQuery = Prisma.sql`
+      // -----------------------------------------------------------------------
+      // COUNT QUERY
+      // -----------------------------------------------------------------------
+      const countQuery = Prisma.sql`
   SELECT COUNT(*) AS count
   FROM "Product" p
 
@@ -219,121 +310,130 @@ export const productRepo = {
   ${whereClause}
 `;
 
-    const [rows, countResult] = await Promise.all([
-      prisma.$queryRaw<ProductRow[]>(dataQuery),
-      prisma.$queryRaw<[{ count: bigint }]>(countQuery),
-    ]);
+      const [rows, countResult] = await Promise.all([
+        prisma.$queryRaw<ProductRow[]>(dataQuery),
+        prisma.$queryRaw<[{ count: bigint }]>(countQuery),
+      ]);
 
-    const total = Number(countResult[0].count);
-    const products = await attachRelations(rows, {
-      includeSeller: true,
-      includePickupWindows: true,
+      const total = Number(countResult[0].count);
+      const products = await attachRelations(rows, {
+        includeSeller: true,
+        includePickupWindows: true,
+      });
+
+      return {
+        products,
+        meta: {
+          page: safePage,
+          limit: safeLimit,
+          total,
+          hasMore: offset + products.length < total,
+        },
+      };
     });
-
-    return {
-      products,
-      meta: {
-        page: safePage,
-        limit: safeLimit,
-        total,
-        hasMore: offset + products.length < total,
-      },
-    };
   },
 
   async findById(id: string): Promise<ProductWithRelations | null> {
-    const product = await prisma.product.findFirst({
-      where: {
-        id,
-        productStatus: "ACTIVE",
-        deletedAt: null,
-      },
-      include: {
-        priceTiers: {
-          select: {
-            id: true,
-            productId: true,
-            minQty: true,
-            maxQty: true,
-            pricePerUnit: true,
-          },
+    return withCache(CK.productDetail(id), TTL.PRODUCT_DETAIL, async () => {
+      const product = await prisma.product.findFirst({
+        where: {
+          id,
+          productStatus: "ACTIVE",
+          deletedAt: null,
         },
-        deals: {
-          where: {
-            status: "ACTIVE",
-            expiresAt: { gt: new Date() },
+        include: {
+          priceTiers: {
+            select: {
+              id: true,
+              productId: true,
+              minQty: true,
+              maxQty: true,
+              pricePerUnit: true,
+            },
           },
-          orderBy: {
-            expiresAt: "asc",
+          deals: {
+            where: {
+              status: "ACTIVE",
+              expiresAt: { gt: new Date() },
+            },
+            orderBy: {
+              expiresAt: "asc",
+            },
+            take: 1,
           },
-          take: 1,
-        },
-        seller: {
-          select: {
-            userId: true,
-            storeName: true,
-            sellerRating: true,
-            reliabilityScore: true,
-            user: { select: { id: true, name: true } },
-            pickupWindows: {
-              // ← nested inside seller
-              where: { deletedAt: null },
+          seller: {
+            select: {
+              userId: true,
+              storeName: true,
+              sellerRating: true,
+              reliabilityScore: true,
+              user: { select: { id: true, name: true } },
+              pickupWindows: {
+                // ← nested inside seller
+                where: { deletedAt: null },
+              },
             },
           },
         },
-      },
+      });
+
+      if (!product) return null;
+      const activeDeal = product.deals[0] ?? null;
+
+      return {
+        ...product,
+        distance_km: 0,
+        min_price: null,
+        dealDiscountPercent: activeDeal?.discountPercent ?? null,
+        dealExpiresAt: activeDeal?.expiresAt ?? null,
+        seller: product.seller
+          ? {
+              id: product.seller.user.id,
+              name: product.seller.user.name,
+              storeName: product.seller.storeName,
+              reliabilityScore: product.seller.reliabilityScore,
+              sellerRating: product.seller.sellerRating,
+            }
+          : undefined,
+        pickupWindows: product.seller?.pickupWindows?.map((w) => ({
+          id: w.id,
+          labelEn: w.labelEn,
+          labelHi: w.labelHi,
+          startTime: w.startTime,
+          endTime: w.endTime,
+          daysActive: w.daysActive,
+        })),
+      };
     });
-
-    if (!product) return null;
-    const activeDeal = product.deals[0] ?? null;
-
-    return {
-      ...product,
-      distance_km: 0,
-      min_price: null,
-      dealDiscountPercent: activeDeal?.discountPercent ?? null,
-      dealExpiresAt: activeDeal?.expiresAt ?? null,
-      seller: product.seller
-        ? {
-            id: product.seller.user.id,
-            name: product.seller.user.name,
-            storeName: product.seller.storeName,
-            reliabilityScore: product.seller.reliabilityScore,
-            sellerRating: product.seller.sellerRating,
-          }
-        : undefined,
-      pickupWindows: product.seller?.pickupWindows?.map((w) => ({
-        id: w.id,
-        labelEn: w.labelEn,
-        labelHi: w.labelHi,
-        startTime: w.startTime,
-        endTime: w.endTime,
-        daysActive: w.daysActive,
-      })),
-    };
   },
 
   async findBySeller(sellerId: string, input: GetSellerProductsInput) {
     const safePage = Math.max(1, input.page ?? 1);
     const safeLimit = Math.min(50, Math.max(1, input.limit ?? 20));
+    const status = input.status ?? "ACTIVE";
 
-    return prisma.product.findMany({
-      where: {
-        sellerId,
-        productStatus: (input.status ?? "ACTIVE") as never,
-      },
-      include: {
-        priceTiers: true,
-        deals: {
-          where: { status: "ACTIVE", expiresAt: { gt: new Date() } },
-          take: 1,
-        },
-        _count: { select: { orderItems: true } },
-      },
-      skip: (safePage - 1) * safeLimit,
-      take: safeLimit,
-      orderBy: { createdAt: "desc" },
-    });
+    return withCache(
+      CK.sellerProducts(sellerId, safePage, status),
+      TTL.PRODUCT_DETAIL,
+      () =>
+        prisma.product.findMany({
+          where: {
+            sellerId,
+            productStatus: (input.status ?? "ACTIVE") as never,
+          },
+          include: {
+            priceTiers: true,
+            deals: {
+              where: { status: "ACTIVE", expiresAt: { gt: new Date() } },
+              take: 1,
+            },
+            _count: { select: { orderItems: true } },
+          },
+          skip: (safePage - 1) * safeLimit,
+          take: safeLimit,
+          orderBy: { createdAt: "desc" },
+        }),
+    );
   },
 
   async findBySellerAndId(productId: string, sellerId: string) {

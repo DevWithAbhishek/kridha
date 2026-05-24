@@ -7,17 +7,17 @@
 -- CreateEnum
 CREATE TYPE "AdminRole" AS ENUM ('REVIEWER', 'SUPER_ADMIN');
 
--- DropIndex
-DROP INDEX IF EXISTS "product_location_gist";
+-- -- DropIndex
+-- DROP INDEX IF EXISTS "product_location_gist";
 
--- DropIndex  
-DROP INDEX IF EXISTS "product_name_en_trgm";
+-- -- DropIndex  
+-- DROP INDEX IF EXISTS "product_name_en_trgm";
 
--- DropIndex
-DROP INDEX IF EXISTS "product_name_hi_trgm";
+-- -- DropIndex
+-- DROP INDEX IF EXISTS "product_name_hi_trgm";
 
--- AlterTable
-ALTER TABLE "Product" DROP COLUMN IF EXISTS "location";
+-- -- AlterTable
+-- ALTER TABLE "Product" DROP COLUMN IF EXISTS "location";
 
 -- CreateTable
 CREATE TABLE "AdminUser" (

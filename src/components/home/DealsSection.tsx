@@ -75,7 +75,7 @@ export function DealsSection() {
                     </div>
                 ) : (
                     <div className="flex gap-4 overflow-x-auto pb-4 snap-x snap-mandatory lg:grid lg:grid-cols-3 lg:gap-6 lg:overflow-visible">
-                        {deals?.map((deal) => (
+                        {/* {deals?.map((deal) => (
                             <div key={deal.id} className="bg-[var(--color-surface)] dark:bg-surface-dark rounded-card shadow-card border border-[var(--color-border)] p-card min-w-[280px] snap-center lg:min-w-0">
                                 <div className="relative mb-4">
                                     <div className="absolute top-0 right-0 bg-kridha-accent text-gray-900 text-label-sm font-bold px-2 py-0.5 rounded-bl-md">
@@ -105,7 +105,7 @@ export function DealsSection() {
                                     Add to cart
                                 </Button>
                             </div>
-                        ))}
+                        ))} */}
                     </div>
                 )}
             </div>

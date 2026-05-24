@@ -422,6 +422,122 @@ function OtpDisplay({ otp }: { otp: string }) {
   );
 }
 
+function PayNowButton({
+  orderId,
+  advanceAmount,
+  onSuccess,
+}: {
+  orderId: string;
+  advanceAmount: number;
+  onSuccess: () => void;
+}) {
+  const { lang } = useLangStore();
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+  const [timeLeft, setTimeLeft] = useState<number | null>(null);
+
+  // Countdown from createdAt — pulled from order.createdAt
+  // Parent passes this via prop instead
+
+  async function handlePay() {
+    setLoading(true);
+    setError("");
+
+    try {
+      const res = await api.get(`/orders/${orderId}/advance`);
+      const { razorpayOrderId, amount } = res.data.data;
+
+      // Razorpay checkout.js must be loaded
+      // Add <Script src="https://checkout.razorpay.com/v1/checkout.js" strategy="lazyOnload" />
+      // to your layout.tsx or this page
+      const Razorpay = (
+        window as unknown as {
+          Razorpay: new (opts: unknown) => { open(): void };
+        }
+      ).Razorpay;
+
+      const options = {
+        key: process.env.NEXT_PUBLIC_RAZORPAY_KEY_ID,
+        amount: Math.round(amount * 100),
+        currency: "INR",
+        order_id: razorpayOrderId,
+        name: "Kridha",
+        description: `Advance for order ${orderId.slice(-6).toUpperCase()}`,
+        handler: () => {
+          // Payment captured — webhook will update status to CONFIRMED
+          // Poll via refetchInterval (already on query) — no manual action needed
+          onSuccess();
+        },
+        modal: {
+          ondismiss: () => setLoading(false),
+        },
+        theme: { color: "#16a34a" },
+      };
+
+      new Razorpay(options).open();
+    } catch (e: unknown) {
+      const ex = e as {
+        response?: { status?: number; data?: { message?: string } };
+      };
+
+      if (ex.response?.status === 410) {
+        // Order window expired — lazy expiry will have released stock
+        setError(
+          lang === "hi"
+            ? "Payment window expire हो गया। नया order place करें।"
+            : "Payment window expired. Please place a new order.",
+        );
+        setLoading(false);
+        return;
+      }
+
+      setError(ex.response?.data?.message ?? "Payment initiation failed");
+      setLoading(false);
+    }
+  }
+
+  return (
+    <div className="bg-amber-50 dark:bg-amber-950/20 border border-amber-200 dark:border-amber-800 rounded-2xl p-5 space-y-3">
+      <div className="flex items-start gap-3">
+        <AlertCircle className="w-5 h-5 text-amber-600 dark:text-amber-400 flex-shrink-0 mt-0.5" />
+        <div>
+          <p className="font-bold text-label-md text-amber-700 dark:text-amber-300">
+            {lang === "hi"
+              ? "Advance payment pending है"
+              : "Advance payment pending"}
+          </p>
+          <p className="text-label-xs text-amber-600 dark:text-amber-400 mt-0.5">
+            {lang === "hi"
+              ? `₹${advanceAmount.toLocaleString("en-IN")} advance pay करें। 15 मिनट में pay नहीं किया तो order cancel होगा।`
+              : `Pay ₹${advanceAmount.toLocaleString("en-IN")} advance. Order cancels automatically if not paid within 15 minutes.`}
+          </p>
+        </div>
+      </div>
+
+      {error && (
+        <div className="px-4 py-3 rounded-xl bg-red-50 dark:bg-red-950/20 border border-red-200 dark:border-red-800 text-label-sm text-red-700 dark:text-red-400">
+          {error}
+        </div>
+      )}
+
+      <Button
+        variant="primary"
+        size="lg"
+        className="w-full"
+        onClick={handlePay}
+        loading={loading}
+        disabled={loading}
+      >
+        {loading
+          ? lang === "hi"
+            ? "Opening..."
+            : "Opening payment..."
+          : `Pay ₹${advanceAmount.toLocaleString("en-IN")} Advance`}
+      </Button>
+    </div>
+  );
+}
+
 // ── Bill items ─────────────────────────────────────────────────────────────────
 function BillItems({
   items,
@@ -572,6 +688,7 @@ export default function BuyerOrderDetailPage({
       </div>
     );
 
+
   return (
     <div className="max-w-3xl mx-auto px-4 sm:px-6 py-6 space-y-5">
       {/* Back */}
@@ -595,6 +712,15 @@ export default function BuyerOrderDetailPage({
             </h1>
           </div>
           <StatusBadge status={order.status} />
+          {order.status === "PENDING" && (
+            <PayNowButton
+              orderId={id}
+              advanceAmount={order.advanceAmount}
+              onSuccess={() =>
+                qc.invalidateQueries({ queryKey: ["order-detail-buyer", id] })
+              }
+            />
+          )}
         </div>
         {/* Seller */}
         <div className="flex items-start gap-3 py-3 border-t border-gray-100 dark:border-gray-800">
@@ -720,6 +846,45 @@ export default function BuyerOrderDetailPage({
           </div>
         </div>
       )}
+
+      {order.status === "CANCELLED" &&
+        order.statusHistory.at(-1)?.note?.includes("Auto-expired") && (
+          <div className="bg-gray-50 dark:bg-gray-800 border border-border-DEFAULT dark:border-border-dark rounded-2xl p-5 space-y-3">
+            <div className="flex items-start gap-3">
+              <Clock className="w-5 h-5 text-muted-DEFAULT flex-shrink-0 mt-0.5" />
+              <div>
+                <p className="font-semibold text-label-md text-[var(--color-text)]">
+                  {lang === "hi"
+                    ? "Payment window expire हो गया"
+                    : "Payment window expired"}
+                </p>
+                <p className="text-label-sm text-muted-DEFAULT dark:text-muted-dark mt-0.5">
+                  {lang === "hi"
+                    ? "Stock release हो गया है। अभी भी available है तो नया order place करें।"
+                    : "Stock has been released. Place a new order if still available."}
+                </p>
+              </div>
+            </div>
+
+            {/* Show each item as a quick re-order link */}
+            <div className="space-y-2">
+              {order.orderItems.map((item) => (
+                <Link
+                  key={item.productId}
+                  href={`/products/${item.productId}`}
+                  className="flex items-center justify-between px-4 py-3 rounded-xl border border-border-DEFAULT dark:border-border-dark hover:border-kridha-primary transition-colors group"
+                >
+                  <span className="text-label-sm text-[var(--color-text)] font-medium">
+                    {item.productNameEn}
+                  </span>
+                  <span className="text-label-xs text-kridha-primary group-hover:underline">
+                    {lang === "hi" ? "फिर order करें →" : "Order again →"}
+                  </span>
+                </Link>
+              ))}
+            </div>
+          </div>
+        )}
 
       <CancelModal
         open={cancelOpen}

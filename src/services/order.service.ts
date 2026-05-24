@@ -9,12 +9,13 @@ import { GetOrdersInput } from "@/schemas";
 import { orderRepo } from "@/repo/order.repo";
 import { OrderStatus } from "@prisma/client";
 import { istTimeToUTCDate } from "@/lib/time";
+import { logger } from "@/lib/logger";
 
 export interface CreateItem {
   productId: string;
   quantity: number;
   pickupWindowId: string;
-  pickUpDate: Date;
+  pickupDate: Date;
 }
 
 export const orderService = {
@@ -46,14 +47,41 @@ export const orderService = {
       };
     });
 
-    if (!enriched.length) {
-      throw ERR.CART_EMPTY;
+    if (products.length !== productIds.length) {
+      // Some products were deleted — findMany silently omits them
+      // The map.get() will throw PRODUCT_NOT_FOUND, but this catches it earlier
+      // with a clearer error
+      throw ERR.PRODUCT_NOT_FOUND;
     }
     const bySeller = new Map<string, typeof enriched>();
     for (const item of enriched) {
       const arr = bySeller.get(item.product.sellerId) ?? [];
       arr.push(item);
       bySeller.set(item.product.sellerId, arr);
+    }
+
+    const sellerIds = [...bySeller.keys()];
+    const sellers = await prisma.sellerProfile.findMany({
+      where: { userId: { in: sellerIds } },
+      select: { userId: true, profileStatus: true, bankVerified: true },
+    });
+
+    for (const seller of sellers) {
+      if (seller.profileStatus !== "VERIFIED") {
+        throw ERR.FORBIDDEN; // better: SELLER_NOT_VERIFIED error
+      }
+    }
+
+    const windowIds = [...bySeller.values()].map(
+      (items) => items[0].pickupWindowId,
+    );
+    const windows = await prisma.pickupWindow.findMany({
+      where: { id: { in: windowIds }, deletedAt: null },
+    });
+    const windowMap = new Map(windows.map((w) => [w.id, w]));
+    for (const [, sellerItems] of bySeller) {
+      const win = windowMap.get(sellerItems[0].pickupWindowId);
+      if (!win) throw ERR.WINDOW_UNAVAILABLE;
     }
 
     const cfg = await prisma.platformConfig.findUniqueOrThrow({
@@ -142,13 +170,11 @@ export const orderService = {
         totalAdvance += adv;
 
         // pickupDeadline = pickupDate + endTime of window (stored for cron index INV-13)
-        const window = await tx.pickupWindow.findUnique({
-          where: { id: sellerItems[0].pickupWindowId },
-        });
-        const endTime = window?.endTime ?? "23:59";
+        const window = windowMap.get(sellerItems[0].pickupWindowId)!; // already validated
+        const endTime = window.endTime;
         const pickupDeadline = istTimeToUTCDate(
           endTime,
-          sellerItems[0].pickUpDate,
+          sellerItems[0].pickupDate,
         );
 
         subOrderData.push({
@@ -158,14 +184,15 @@ export const orderService = {
           adv,
           remaining: sellerTotal - adv,
           pickupWindowId: sellerItems[0].pickupWindowId,
-          pickupDate: sellerItems[0].pickUpDate,
+          pickupDate: sellerItems[0].pickupDate,
           pickupDeadline,
           lines,
         });
       }
 
       if (grandTotal <= 0 || totalAdvance <= 0) {
-        throw ERR.BELOW_MINIMUM_ORDER;
+        logger.error({grandTotal, totalAdvance}, "Order totals are ero - data integrity issue")
+        throw ERR.INTERNAL_ERROR;
       }
 
       const order = await tx.order.create({
@@ -196,6 +223,7 @@ export const orderService = {
             pickupDeadline: sd.pickupDeadline,
             orderItems: { create: sd.lines },
           },
+          include: { orderItems: true }, // needed for rollback
         });
 
         await tx.orderStatusHistory.create({
@@ -213,16 +241,53 @@ export const orderService = {
 
     // 3. Create combined Razorpay advance order
     const rz = getRazorPay();
-    const rzOrder = await rz.orders
-      .create({
+    let rzOrder;
+
+    try {
+      rzOrder = await rz.orders.create({
         amount: Math.round(result.totalAdvance * 100),
         currency: "INR",
         receipt: result.order.id,
-      })
-      .catch((err) => {
-        console.error("Razorpay error:", err);
-        throw ERR.RAZORPAY_ERROR;
       });
+    } catch (err) {
+      logger.error(
+        { err },
+        "Razorpay order creation failed — rolling back stock",
+      );
+
+      // Compensating transaction: restore stock + cancel suborders
+      // subOrders need orderItems — add include to tx.subOrder.create above
+      await prisma
+        .$transaction([
+          ...result.subOrders.flatMap((sub) =>
+            (sub.orderItems ?? []).map((oi) =>
+              prisma.product.update({
+                where: { id: oi.productId },
+                data: { available: { increment: oi.quantity } },
+              }),
+            ),
+          ),
+          ...result.subOrders.map((sub) =>
+            prisma.subOrder.update({
+              where: { id: sub.id },
+              data: {
+                status: "CANCELLED",
+                cancelledAt: new Date(),
+                cancellationReason: "Razorpay initialization failed",
+              },
+            }),
+          ),
+        ])
+        .catch((rollbackErr) =>
+          logger.error(
+            { rollbackErr },
+            "Stock rollback also failed — manual intervention needed",
+          ),
+        );
+
+      throw ERR.RAZORPAY_ERROR;
+    }
+
 
     // Store razorpayAdvanceId on each SubOrder
     await Promise.all(
@@ -347,7 +412,7 @@ export const orderService = {
       productId: ci.productId,
       quantity: ci.quantity,
       pickupWindowId: ci.pickupWindowId,
-      pickUpDate: ci.pickupDate,
+      pickupDate: ci.pickupDate,
     }));
     const result = await orderService.create(buyerId, items, cartSessionId);
 

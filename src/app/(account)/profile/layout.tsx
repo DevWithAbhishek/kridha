@@ -11,7 +11,6 @@ import {
   Bell,
   ChartLine,
   Settings,
-  LogOut,
   ListCollapse,
   Search,
   Heart,
@@ -24,6 +23,7 @@ import * as Dialog from "@radix-ui/react-dialog";
 import { X } from "lucide-react";
 import { RoleToggle } from "@/components/shared/RoleToggle";
 import { LogoutButton } from "@/components/shared/LogoutButton";
+import Script from "next/script";
 
 const buyerNav = [
   { href: "/profile/dashboard", label: "Dashboard", icon: User },
@@ -214,6 +214,10 @@ export default function AccountLayout({
           })}
         </nav>
       </div>
+      <Script
+        src="https://checkout.razorpay.com/v1/checkout.js"
+        strategy="lazyOnload"
+      />
     </AuthGuard>
   );
 }

@@ -1,6 +1,7 @@
 import { prisma } from "@/lib/db";
 import { NotificationType } from "@prisma/client";
 import { notifStrings } from "@/lib/i18n-strings";
+import { cacheInvalidate, withCache, CK, TTL } from "@/lib/redis";
 
 type Lang = "en" | "hi";
 
@@ -22,6 +23,54 @@ async function insertNotification(
   await prisma.notification.create({
     data: { userId, subOrderId, type, title, body },
   });
+
+  await cacheInvalidate.notifications(userId);
+}
+
+// Get paginated notifications with caching
+export async function getNotifications(
+  userId: string,
+  page: number,
+  limit: number,
+) {
+  const safePage = Math.max(1, page);
+  const safeLimit = Math.min(50, Math.max(1, limit));
+
+  return withCache(
+    CK.notifications(userId, safePage),
+    TTL.NOTIFICATIONS,
+    async () => {
+      const [notifications, total] = await Promise.all([
+        prisma.notification.findMany({
+          where: { userId },
+          orderBy: { createdAt: "desc" },
+          skip: (safePage - 1) * safeLimit,
+          take: safeLimit,
+        }),
+        prisma.notification.count({ where: { userId } }),
+      ]);
+      return { notifications, total };
+    },
+  );
+}
+
+// Mark as read — invalidate cache
+export async function markRead(userId: string, notificationId: string) {
+  const result = await prisma.notification.updateMany({
+    where: { id: notificationId, userId },
+    data: { read: true },
+  });
+  await cacheInvalidate.notifications(userId);
+  return result;
+}
+
+export async function markAllRead(userId: string) {
+  const result = await prisma.notification.updateMany({
+    where: { userId, read: false },
+    data: { read: true },
+  });
+  await cacheInvalidate.notifications(userId);
+  return result;
 }
 
 export const notificationService = {
@@ -201,4 +250,34 @@ export const notificationService = {
       rc.body,
     );
   },
+
+  // async paymentReceived(subOrderId: string): Promise<void> {
+  //   const sub = await prisma.subOrder.findUnique({
+  //     where: { id: subOrderId },
+  //     include: { order: { select: { buyerId: true } } },
+  //   });
+  //   if (!sub) return;
+  //   const [buyerLang, sellerLang] = await Promise.all([
+  //     getLang(sub.order.buyerId),
+  //     getLang(sub.sellerId),
+  //   ]);
+  //   const bc = notifStrings.paymentReceived[buyerLang](sub.shortId);
+  //   const sc = notifStrings.paymentReceived[sellerLang](sub.shortId);
+  //   await Promise.all([
+  //     insertNotification(
+  //       sub.order.buyerId,
+  //       subOrderId,
+  //       NotificationType.PAYMENT_RECEIVED,
+  //       bc.title,
+  //       bc.body,
+  //     ),
+  //     insertNotification(
+  //       sub.sellerId,
+  //       subOrderId,
+  //       NotificationType.PAYMENT_RECEIVED,
+  //       sc.title,
+  //       sc.body,
+  //     ),
+  //   ]);
+  // },
 };

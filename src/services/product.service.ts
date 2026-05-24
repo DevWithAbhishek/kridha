@@ -1,5 +1,7 @@
+
 import { prisma } from "@/lib/db";
 import { ERR } from "@/lib/errors";
+import { cacheInvalidate } from "@/lib/redis";
 import { productRepo } from "@/repo/product.repo";
 import type {
   AddProductInput,
@@ -39,7 +41,7 @@ export const productService = {
     }
 
     const { priceTiers, ...rest } = input;
-    return prisma.product.create({
+    const product = await prisma.product.create({
       data: {
         ...rest,
         sellerId,
@@ -48,6 +50,10 @@ export const productService = {
       },
       include: { priceTiers: true },
     });
+
+    // Invalidate all product list caches — new product may appear in feeds
+    await cacheInvalidate.product(product.id, sellerId);
+    return product;
   },
 
   async update(productId: string, sellerId: string, input: UpdateProductInput) {
@@ -58,7 +64,7 @@ export const productService = {
     if (product.sellerId != sellerId) throw ERR.FORBIDDEN;
 
     const { priceTiers, minOrderQty, maxOrderQty, ...rest } = input;
-    return prisma.product.update({
+    const updated = await prisma.product.update({
       where: { id: productId },
       data: {
         ...rest,
@@ -71,6 +77,10 @@ export const productService = {
       },
       include: { priceTiers: true },
     });
+
+    // Invalidate caches for this product and seller's product list
+    await cacheInvalidate.product(productId, sellerId);
+    return updated;
   },
 
   async softDelete(productId: string, sellerId: string) {
@@ -80,12 +90,16 @@ export const productService = {
     if (!product) throw ERR.PRODUCT_NOT_FOUND;
     if (product.sellerId != sellerId) throw ERR.FORBIDDEN;
 
-    return await prisma.product.update({
+    const deleted = await prisma.product.update({
       where: { id: productId },
       data: {
         productStatus: "DELETED",
         deletedAt: new Date(),
       },
     });
+
+    // Invalidate caches for this product and seller's product list
+    await cacheInvalidate.product(productId, sellerId);
+    return deleted;
   },
 };

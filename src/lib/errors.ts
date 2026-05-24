@@ -353,6 +353,11 @@ export const ERR = {
     409,
   ),
 
+  INTERNAL_ERROR: new AppError(
+    "INTERNAL_ERROR",
+    "Something went wrong, try again in some time.",
+    500,
+  ),
   // ── External Services ─────────────────────────────────────────────────
 
   // 502 — Razorpay API call failed (retryable)

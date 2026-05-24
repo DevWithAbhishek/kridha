@@ -1,6 +1,14 @@
 import { prisma } from "@/lib/db";
 import { ERR } from "@/lib/errors";
-import { AddDealToProductInput, EditDealToProductInput, GetProductsInput, GetSellerDealsInput } from "@/schemas";
+import {
+  AddDealToProductInput,
+  EditDealToProductInput,
+  GetProductsInput,
+  GetSellerDealsInput,
+} from "@/schemas";
+import { withCache, cacheInvalidate, CK, TTL } from "@/lib/redis";
+import { productRepo } from "@/repo/product.repo";
+import { cache } from "react";
 
 export const dealService = {
   async add(productId: string, sellerId: string, input: AddDealToProductInput) {
@@ -18,7 +26,7 @@ export const dealService = {
 
     if (input.expiresAt <= new Date()) throw ERR.INVALID_EXPIRY_TIME;
 
-    return prisma.deal.create({
+    const deal = await prisma.deal.create({
       data: {
         productId,
         sellerId,
@@ -27,6 +35,11 @@ export const dealService = {
         status: "ACTIVE",
       },
     });
+
+    // Invalidate product detail (shows deal price) + deals list + product list
+    await cacheInvalidate.deals();
+    await cacheInvalidate.product(productId, sellerId);
+    return deal;
   },
 
   async edit(
@@ -103,15 +116,20 @@ export const dealService = {
 
   // Called from GET /api/products/deals — all products with an active deal
   async listActiveDealsNearby(lat: number, lng: number, radius: number) {
-    // Reuses productRepo.findNearBy with deal active filter
-    const { productRepo: repo } = await import('@/repo/product.repo');
-    return repo.findNearby({
-      lat,
-      lng,
-      radius,
-      dealActive: true,
-      limit: 50,
-      page: 1
-    } as GetProductsInput, undefined);
-  }
+    // Reuses productRepo.findNearBy with deal active filter and caching — ensures consistent results and efficient DB usage.
+    const cacheKey = CK.dealsList(lat, lng, radius);
+    return withCache(cacheKey, TTL.DEALS_LIST, () =>
+      productRepo.findNearby(
+        {
+          lat,
+          lng,
+          radius,
+          dealActive: true,
+          limit: 50,
+          page: 1,
+        } as GetProductsInput,
+        undefined,
+      ),
+    );
+  },
 };

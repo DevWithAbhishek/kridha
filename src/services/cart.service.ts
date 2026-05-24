@@ -8,6 +8,7 @@ import {
   isTodayInIST,
   istDayOfWeek,
 } from "@/lib/time";
+import { releaseExpiredHoldsForProduct } from "@/lib/expiry";
 
 const CART_INCLUDE = {
   cartItems: {
@@ -45,6 +46,7 @@ export const cartService = {
   },
 
   async addItem(userId: string, input: AddItemToCartInput) {
+    await releaseExpiredHoldsForProduct(input.productId).catch(() => {});
     const product = await prisma.product.findUnique({
       where: {
         id: input.productId,

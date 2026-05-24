@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { handleError } from "@/lib/handleError";
 import { getUser } from "@/lib/get-user";
 import { CreateOrderSchema, GetOrdersSchema } from "@/schemas";
-import { orderService } from "@/services/order.service";
+import { CreateItem, orderService } from "@/services/order.service";
 
 // GET /api/orders — BUYER sees placed, SELLER sees received (same endpoint)
 export async function GET(req: NextRequest) {
@@ -21,11 +21,11 @@ export async function POST(req: NextRequest) {
     try {
         const user = await getUser(req);
         const body = CreateOrderSchema.parse(await req.json());
-        const items = body.items.map(i => ({
+        const items: CreateItem[] = body.items.map(i => ({
             productId: i.productId,
             pickupWindowId: i.pickupWindowId,
             quantity: i.quantity,
-            pickUpDate: new Date(i.pickupDate),
+            pickupDate: new Date(i.pickupDate),
         }));
 
         const result = await orderService.create(user.userId, items, body.cartSessionId);

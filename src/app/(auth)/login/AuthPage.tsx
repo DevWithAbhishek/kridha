@@ -11,6 +11,7 @@ import { Button } from '@/components/ui/Button';
 import { LoginInput, LoginSchema, SignupInput, SignupSchema } from '@/schemas';
 import { api } from '@/lib/api';
 import { useQueryClient } from '@tanstack/react-query';
+import toast from '@/lib/toastNotifications';
 
 export default function AuthPage() {
     const t = useTranslations('auth');
@@ -47,11 +48,13 @@ export default function AuthPage() {
         try {
             await api.post('/auth/login', { phone: values.phone, pin: values.pin });
             await qc.invalidateQueries({ queryKey: ['me'] });
+            toast.success("Welcome Back to KRIDHA!!!")
             router.push(redirectUrl);
         } catch (err) {
             const e = err as { response?: { status?: number; data?: { code?: string } } };
             const status = e.response?.status;
             const code = e.response?.data?.code;
+            toast.warning("Login Failed. Please retry.")
             if (status === 401 || code === 'INVALID_CREDENTIALS') {
                 setFormError(tError('INVALID_CREDENTIALS'));
             } else if (status === 429 || code === 'PIN_LOCKED' || code === 'RATE_LIMITED') {
@@ -84,11 +87,13 @@ export default function AuthPage() {
             // Invalidate stale ['me'] cache before navigating — prevents AuthGuard
             // from reading a null user from a previous failed attempt.
             await qc.invalidateQueries({ queryKey: ['me'] });
+            toast.success("Welcome to Kridha !!!")
 
             router.push(redirectUrl);
         } catch (err) {
             const e = err as { response?: { status?: number; data?: { code?: string } } };
             const code = e.response?.data?.code;
+            toast.error("Signup Failed. Please check details");
             if (code === 'INVALID_CREDENTIALS') {
                 // Signup succeeded but auto-login failed — rare, ask user to log in
                 setActiveTab('login');

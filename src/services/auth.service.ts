@@ -18,7 +18,7 @@ async function hashByArgon(raw: string) {
   return await argon2.hash(raw);
 }
 
-const DUMMY_HASH = "$argon2id$v=19$m=65536,t=3,p=4$dummy";
+const DUMMY_HASH = await hashByArgon("invalid-pin");
 
 async function verifyByArgon(hash: string, raw: string) {
   return await argon2.verify(hash, raw);

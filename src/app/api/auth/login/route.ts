@@ -4,7 +4,6 @@ import { LoginSchema } from "@/schemas";
 import { authService } from "@/services/auth.service";
 import { setAuthCookies } from "@/lib/cookies";
 import { withLogger } from "@/lib/withLogger";
-import { toast } from "@/lib/toastNotifications";
 
 export const POST = withLogger(async (req: NextRequest) => {
   try {

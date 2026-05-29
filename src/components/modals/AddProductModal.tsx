@@ -446,7 +446,7 @@ export function AddProductModal({ open, onClose, onSave }: Props) {
                                 <div className="text-label-sm text-muted-DEFAULT dark:text-muted-dark flex items-center gap-1.5">
                                     <span className={`w-2 h-2 rounded-full inline-block ${lat && lng ? 'bg-success-dark' : 'bg-amber-400 animate-pulse'}`} />
                                     {lat && lng
-                                        ? `${t("location_found")} ${lat.toFixed(4)}, ${lng.toFixed(4)}`
+                                        ? `${t("location_found")} ${lat.toFixed(3)}, ${lng.toFixed(3)}`
                                         : `${t("location_detecting")}`}
                                 </div>
 

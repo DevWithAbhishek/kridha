@@ -3,42 +3,31 @@ import { prisma, withRetry } from "@/lib/db";
 import { redis } from "@/lib/redis";
 
 export async function GET() {
-  // const start = Date.now();
-  // try {
-  //   await prisma.$queryRaw`SELECT 1`;
-  //   return Response.json({
-  //     status: "ok",
-  //     dbMs: Date.now() - start,
-  //     timestamp: new Date().toISOString(),
-  //   });
-  // } catch (err) {
-  //   return Response.json(
-  //     { status: "degraded", error: String(err) },
-  //     { status: 500 },
-  //   );
-  // }
-
   const results = {
-    db: "unknown",
-    redis: "unknown",
+    db: "down",
+    redis: "down",
   };
 
   try {
     await withRetry(() => prisma.$queryRaw`SELECT 1`);
     results.db = "ok";
-  } catch {
-    results.db = "down";
-  }
+  } catch {}
 
   try {
     await redis.ping();
     results.redis = "ok";
-  } catch {
-    results.redis = "down";
-  }
+  } catch {}
+
+  const overall =
+    results.db === "ok" && results.redis === "ok"
+      ? "ok"
+      : results.db === "ok" || results.redis === "ok"
+        ? "degraded"
+        : "down";
 
   return NextResponse.json({
-    status: "ok", // 👈 always ok
+    status: overall,
     ...results,
+    timestamp: new Date().toISOString(),
   });
 }

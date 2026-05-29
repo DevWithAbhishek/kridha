@@ -53,8 +53,8 @@ const dummyDeals: Deal[] = [
 
 export function DealsSection() {
     const t = useTranslations('deals');
-    const lat = 26.71308;
-    const lng = 83.330057;
+    const lat = 26.713;
+    const lng = 83.330;
     const { data: deals, loading } = useFetch<Deal[]>(`/api/products/deals?lat=${lat}&lng=${lng}`, dummyDeals);
 
     return (

@@ -1,29 +1,54 @@
 import { PrismaClient } from "@prisma/client";
 import { PrismaPg } from "@prisma/adapter-pg";
+import pg from "pg";
 
 const globalForPrisma = globalThis as unknown as {
   prisma?: PrismaClient;
+  pgPool?: pg.Pool;
 };
 
-const adapter = new PrismaPg({
-  connectionString:
-    process.env.NODE_ENV === "production"
+const isProd = process.env.NODE_ENV === "production";
+
+// ── Connection pool — created once, shared across all requests ─────────────
+const pool =
+  globalForPrisma.pgPool ??
+  new pg.Pool({
+    connectionString: isProd
       ? process.env.DATABASE_URL!
       : (process.env.DIRECT_URL ?? process.env.DATABASE_URL!),
-});
 
+    // ── Pool sizing ────────────────────────────────────────────────────────
+    // Docker local:    no connection limit → set high
+    // Supabase free:   max 60 direct / 200 pooled → use 15 to leave headroom
+    max: isProd ? 15 : 50,
+
+    // Kill idle connections after 30s to avoid holding Supabase slots
+    idleTimeoutMillis: 30_000,
+
+    // Fail fast if pool is exhausted — don't queue forever
+    connectionTimeoutMillis: 5_000,
+
+    // SSL required for Supabase, not needed for local Docker
+    ssl: isProd ? { rejectUnauthorized: false } : false,
+  });
+
+if (!isProd) {
+  globalForPrisma.pgPool = pool;
+}
+
+// ── Adapter — pass the pool, not a connection string ─────────────────────
+const adapter = new PrismaPg(pool);
+
+// ── Prisma client singleton ────────────────────────────────────────────────
 export const prisma =
   globalForPrisma.prisma ??
   new PrismaClient({
     adapter,
 
-    log:
-      process.env.NODE_ENV !== "production"
-        ? ["query", "warn", "error"]
-        : ["error"],
+    log: !isProd ? ["warn", "error"] : ["error"],
   });
 
-if (process.env.NODE_ENV !== "production") {
+if (!isProd) {
   globalForPrisma.prisma = prisma;
 }
 

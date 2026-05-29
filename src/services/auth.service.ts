@@ -94,6 +94,9 @@ export const authService = {
         await authRepo.updateUserLoginAttempts(user.id, attempts, lockedUntil);
       }
 
+      const delay = 800 + Math.random() * 700;
+      await new Promise((r) => setTimeout(r, delay)); // to make fake users delay attacks
+
       throw ERR.INVALID_CREDENTIALS;
     }
 

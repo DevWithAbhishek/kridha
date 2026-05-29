@@ -75,6 +75,8 @@ export async function proxy(req: NextRequest) {
     return NextResponse.next();
   }
 
+  const isLoadTest = process.env.LOAD_TEST_MODE === "true";
+
   const ip = req.headers.get("x-real-ip") ?? "127.0.0.1";
 
   // 2. Admin routes — separate auth surface
@@ -113,7 +115,7 @@ export async function proxy(req: NextRequest) {
 
   // 3. Layer 1 — Per-IP rate limiting (ALL routes except webhook and cron)
   // Runs before PUBLIC_EXACT so login/signup are also IP-rate-limited
-  if (pathname !== "/api/webhooks/razorpay") {
+  if (!isLoadTest && pathname !== "/api/webhooks/razorpay") {
     const limiter =
       pathname === "/api/auth/refresh"
         ? limiters.refreshLimiter
@@ -126,18 +128,27 @@ export async function proxy(req: NextRequest) {
         `ip:${pathname}:${ip}`,
       );
       if (!success) {
-        logger.warn({ event: "security.rate_limited_ip", ip, path: pathname, layer: 1 }, "IP rate limited");
+        logger.warn(
+          { event: "security.rate_limited_ip", ip, path: pathname, layer: 1 },
+          "IP rate limited",
+        );
         return rateLimited(remaining);
       }
     } catch (err) {
-      logger.error({ err, path: pathname }, "Rate limiter layer 1 failed — fail open");
+      logger.error(
+        { err, path: pathname },
+        "Rate limiter layer 1 failed — fail open",
+      );
     }
   }
 
   // 4. Layer 2 — Per-account (login only, distributed stuffing prevention)
-  if (pathname === "/api/auth/login" && req.method === "POST") {
+  if (!isLoadTest && pathname === "/api/auth/login" && req.method === "POST") {
     try {
-      const body = await req.clone().json().catch(() => ({}));
+      const body = await req
+        .clone()
+        .json()
+        .catch(() => ({}));
       const phone = body?.phone as string | undefined;
 
       if (phone && typeof phone === "string") {
@@ -149,15 +160,19 @@ export async function proxy(req: NextRequest) {
         const { success } = await limiters.accountLimiter.limit(accountKey);
 
         if (!success) {
-          logger.warn({
-            event: "security.rate_limited_account",
-            phoneTail: phone.slice(-4),
-            ip, layer: 2,
-          }, "Account rate limited — possible credential stuffing");
+          logger.warn(
+            {
+              event: "security.rate_limited_account",
+              phoneTail: phone.slice(-4),
+              ip,
+              layer: 2,
+            },
+            "Account rate limited — possible credential stuffing",
+          );
 
           Sentry.captureMessage(
             `Account rate limit: ${phone.slice(-4)} from ${ip}`,
-            "warning"
+            "warning",
           );
           return rateLimited(0);
         }
@@ -168,18 +183,23 @@ export async function proxy(req: NextRequest) {
   }
 
   // 5. Layer 3 — Global auth (resource exhaustion / DDoS prevention)
-  if (AUTH_PATHS.has(pathname)) {
+  if (!isLoadTest && AUTH_PATHS.has(pathname)) {
     try {
       const { success } = await limiters.globalAuthLimiter.limit("global:auth");
       if (!success) {
-        logger.error({
-          event: "security.global_auth_rate_limited",
-          ip, path: pathname, layer: 3,
-        }, "CRITICAL: global auth rate limit — possible DDoS");
+        logger.error(
+          {
+            event: "security.global_auth_rate_limited",
+            ip,
+            path: pathname,
+            layer: 3,
+          },
+          "CRITICAL: global auth rate limit — possible DDoS",
+        );
 
         Sentry.captureMessage(
           "Global auth rate limit exceeded — possible DDoS",
-          "fatal"
+          "fatal",
         );
         return rateLimited(0);
       }

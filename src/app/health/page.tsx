@@ -18,7 +18,6 @@ const fallbackHealth: HealthState = {
 export default function HealthPage() {
     const [health, setHealth] = useState<HealthState>(fallbackHealth);
     const [lastChecked, setLastChecked] = useState('...');
-    const [timer, setTimer] = useState<NodeJS.Timeout | null>(null);
 
     async function loadHealth() {
         try {
@@ -37,13 +36,9 @@ export default function HealthPage() {
     }
 
     useEffect(() => {
-        loadHealth();
-        const interval = setInterval(loadHealth, 10000);
-        setTimer(interval);
-        return () => {
-            if (interval) clearInterval(interval);
-            if (timer) clearInterval(timer);
-        };
+      loadHealth();
+      const interval = setInterval(loadHealth, 10000);
+      return () => clearInterval(interval);
     }, []);
 
     const isOk = health.status === 'ok';

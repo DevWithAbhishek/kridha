@@ -7,6 +7,8 @@ import { HowItWorks } from '@/components/home/HowItWorks';
 import { WhyKridha } from '@/components/home/WhyKridha';
 import { TestimonialsSection } from '@/components/home/TestimonialsSection';
 import { CtaBanner } from '@/components/home/CtaBanner';
+import {EngineeringHighlights, HowIBuiltKridha} from "@/components/home/Sections"
+import { ArchitecturePreview, SecurityHighlights } from '@/components/home/arch-security';
 
 export const metadata: Metadata = {
     title: 'Kridha — किराना का भरोसेमंद साथी',
@@ -14,15 +16,19 @@ export const metadata: Metadata = {
 
 export default function HomePage() {
     return (
-        <main>
-            <Navbar />
-            <HeroSection />
-            <DealsSection />
-            <HowItWorks />
-            <WhyKridha />
-            <TestimonialsSection />
-            <CtaBanner />
-            <Footer />
-        </main>
+      <main>
+        <Navbar />
+        <HeroSection />
+        <DealsSection />
+        <HowItWorks />
+        <WhyKridha />
+        <TestimonialsSection />
+        <HowIBuiltKridha />
+        <EngineeringHighlights />
+        <ArchitecturePreview/>
+        <SecurityHighlights/>
+        <CtaBanner />
+        <Footer />
+      </main>
     );
 }

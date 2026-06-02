@@ -239,6 +239,15 @@ export const orderService = {
       return { order, subOrders, totalAdvance };
     });
 
+    if (process.env.LOAD_TEST_MODE === "true") {
+      return {
+        order: result.order,
+        subOrders: result.subOrders,
+        totalAdvance: result.totalAdvance,
+        razorpayOrderId: "mock_order"
+      };
+    }
+
     // 3. Create combined Razorpay advance order
     const rz = getRazorPay();
     let rzOrder;

@@ -17,9 +17,9 @@ const isLocal = !!process.env.REDIS_URL && process.env.REDIS_URL.length > 0;
 // Production: Upstash HTTP Redis (works in Vercel serverless)
 export const upstash: UpstashRedis | null = isUpstash
   ? new UpstashRedis({
-      url: process.env.UPSTASH_REDIS_REST_URL!,
-      token: process.env.UPSTASH_REDIS_REST_TOKEN!,
-    })
+    url: process.env.UPSTASH_REDIS_REST_URL!,
+    token: process.env.UPSTASH_REDIS_REST_TOKEN!,
+  })
   : null;
 
 // Development: local Docker Redis
@@ -105,6 +105,8 @@ export const CK = {
 
   cartSummary: (userId: string): string => `kridha:cart-summary:${userId}`,
 };
+
+const CACHE_NULL_SENTINEL = "__KRIDHA_NULL__";
 
 // ── Core helpers — null-safe, fail-open ───────────────────────────────────
 
@@ -195,22 +197,43 @@ export async function withCache<T>(
   fetchFn: () => Promise<T>,
   options: { logHit?: boolean } = {},
 ): Promise<T> {
-  const cached = await cacheGet<T>(key);
-
+  const cached = await cacheGet<T | typeof CACHE_NULL_SENTINEL>(key);
   if (cached !== null) {
-    if (options.logHit) {
-      logger.debug({ key }, "cache hit");
-    }
-    return cached;
+    if (options.logHit) logger.debug({ key }, "cache hit");
+    return cached === CACHE_NULL_SENTINEL ? (null as T) : (cached as T);
   }
 
-  // Cache miss — fetch from DB
-  const result = await fetchFn();
+  // Stampede protection: one instance computes, others wait briefly then re-check
+  const lockKey = `lock:${key}`;
+  const lockToken = Math.random().toString(36).slice(2);
+  const client = upstash;
 
-  // Write to cache — fire and forget, never block the response
-  cacheSet(key, result, ttl).catch(() => {});
+  const lockAcquired = client
+    ? await client.set(lockKey, lockToken, { nx: true, ex: 5 })
+    : true; // no Redis → no lock, fall through
 
-  return result;
+  if (!lockAcquired) {
+    // Another instance is computing this key — wait 60ms and try cache again
+    await new Promise((r) => setTimeout(r, 60));
+    const retried = await cacheGet<T | typeof CACHE_NULL_SENTINEL>(key);
+    if (retried !== null) {
+      return retried === CACHE_NULL_SENTINEL ? (null as T) : (retried as T);
+    }
+    // Lock expired or race — compute anyway
+  }
+
+  try {
+    const result = await fetchFn();
+    const toCache = result === null ? CACHE_NULL_SENTINEL : result;
+    await cacheSet(key, toCache, ttl); // await here — lock must stay until cache is written
+    return result;
+  } finally {
+    // Release lock only if we still own it (Lua would be safer; acceptable here)
+    if (client && lockAcquired) {
+      const current = await client.get(lockKey);
+      if (current === lockToken) await client.del(lockKey);
+    }
+  }
 }
 
 // ── Invalidation helpers — call after writes ──────────────────────────────
@@ -220,7 +243,7 @@ export const cacheInvalidate = {
   async product(productId: string, sellerId: string): Promise<void> {
     await Promise.all([
       cacheDel(CK.productDetail(productId)),
-      cacheDel(CK.sellerProducts(sellerId, 1, "ACTIVE")),
+      cacheDelPattern(`kridha:seller-products:${sellerId}:*`),
       cacheDelPattern("kridha:products:*"), // all product list pages
       cacheDelPattern("kridha:deals:*"), // deals may include this product
     ]);
@@ -229,18 +252,18 @@ export const cacheInvalidate = {
   // After seller profile updated
   async seller(sellerId: string): Promise<void> {
     await cacheDel(CK.sellerProfile(sellerId));
-    cacheDelPattern(`kridha:seller-products:${sellerId}:*`).catch(() => {});
+    cacheDelPattern(`kridha:seller-products:${sellerId}:*`).catch(() => { });
   },
 
   // After new notification created for user
   async notifications(userId: string): Promise<void> {
-    cacheDelPattern(`kridha:notifs:${userId}:*`).catch(() => {});
+    cacheDelPattern(`kridha:notifs:${userId}:*`).catch(() => { });
   },
 
   // After pickup window updated
   async pickupWindows(sellerId: string): Promise<void> {
     await cacheDel(CK.pickupWindows(sellerId));
-    cacheDelPattern("kridha:products:*").catch(() => {}); // products include windows
+    cacheDelPattern("kridha:products:*").catch(() => { }); // products include windows
   },
 
   // After cart changes (for badge count)
@@ -250,8 +273,8 @@ export const cacheInvalidate = {
 
   // After deal created/expired
   async deals(): Promise<void> {
-    cacheDelPattern("kridha:deals:*").catch(() => {});
-    cacheDelPattern("kridha:products:*").catch(() => {}); // products show deal prices
+    cacheDelPattern("kridha:deals:*").catch(() => { });
+    cacheDelPattern("kridha:products:*").catch(() => { }); // products show deal prices
   },
 };
 

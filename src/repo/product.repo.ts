@@ -11,9 +11,6 @@ import { PriceTier } from "@/types/dashboard";
 import { logger } from "@/lib/logger";
 import {
   withCache,
-  cacheSet,
-  cacheGet,
-  cacheInvalidate,
   CK,
   TTL,
 } from "@/lib/redis";
@@ -48,59 +45,6 @@ export interface ProductWithRelations extends ProductRow {
     endTime: string;
     daysActive: number[];
   }>;
-}
-
-async function releaseExpiredPendingOrders(): Promise<void> {
-  const cutoff = new Date(Date.now() - 15 * 60_000);
-
-  // Find all PENDING suborders older than 15 min with no successful payment
-  const stale = await prisma.subOrder.findMany({
-    where: {
-      status: "PENDING",
-      createdAt: { lt: cutoff },
-      payments: { none: { status: "PAID" } },
-    },
-    include: { orderItems: true },
-  });
-
-  if (!stale.length) return;
-
-  // Release each in its own transaction - one failure doesn't block others
-  await Promise.all(
-    stale.map((sub) =>
-      prisma
-        .$transaction([
-          prisma.subOrder.update({
-            where: { id: sub.id },
-            data: {
-              status: "CANCELLED",
-              cancelledAt: new Date(),
-              cancellationReason: "Auto-expired: payment timeout",
-            },
-          }),
-
-          prisma.orderStatusHistory.create({
-            data: {
-              subOrderId: sub.id,
-              orderId: sub.orderId,
-              fromStatus: "PENDING",
-              toStatus: "CANCELLED",
-              note: "Auto-expired: advance not paid within 15 minutes",
-            },
-          }),
-
-          ...sub.orderItems.map((oi) =>
-            prisma.product.update({
-              where: { id: oi.productId },
-              data: { available: { increment: oi.quantity } },
-            }),
-          ),
-        ])
-        .catch(() => {
-          logger.warn({ subOrderId: sub.id }, "expiry release failed silently");
-        }),
-    ),
-  );
 }
 
 // ---------------------------------------------------------------------------
@@ -231,7 +175,7 @@ export const productRepo = {
 
     // ── Lazy expiry: release expired holds before counting stock ─────────
     // Fire-and-forget — never block the response
-    await releaseAllExpiredPendingOrders().catch(() => {});
+    releaseAllExpiredPendingOrders().catch(() => {});
 
     // ── Cache-aside ───────────────────────────────────────────────────────
     return withCache(cacheKey, TTL.PRODUCT_LIST, async () => {

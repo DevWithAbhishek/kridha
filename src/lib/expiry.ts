@@ -1,5 +1,6 @@
 import { prisma } from "@/lib/db";
 import { logger } from "./logger";
+import { cacheInvalidate } from "@/lib/redis";
 
 //Release expired PENDING orders for a specific product
 export async function releaseExpiredHoldsForProduct(
@@ -15,17 +16,21 @@ export async function releaseExpiredHoldsForProduct(
       orderItems: { some: { productId } }, //only this product
     },
     include: {
-      orderItems: { where: { productId } }, //only relevant items
+      orderItems: true,
     },
   });
 
   if (!stale.length) return;
+  // Collect all affected productIds before the transactions
+  const affectedProductIds = [
+    ...new Set(stale.flatMap((sub) => sub.orderItems.map((oi) => oi.productId))),
+  ];
 
   await Promise.all(
     stale.map((sub) =>
       prisma.$transaction([
         prisma.subOrder.update({
-          where: { id: sub.id },
+          where: { id: sub.id, status: "PENDING", },
           data: {
             status: "CANCELLED",
             cancelledAt: new Date(),
@@ -54,6 +59,15 @@ export async function releaseExpiredHoldsForProduct(
     )
     ),
   );
+
+  // Invalidate after writes complete — not before, not fire-and-forget
+  if (affectedProductIds.length > 0) {
+    await Promise.all(
+      affectedProductIds.map((id) => cacheInvalidate.product(id, ""))
+    );
+    // product list pages contain distance_km + min_price — must invalidate all
+    // cacheInvalidate.product already calls cacheDelPattern("kridha:products:*")
+  }
 }
 
 
@@ -72,12 +86,16 @@ export async function releaseAllExpiredPendingOrders(): Promise<void> {
   });
 
   if (!stale.length) return;
+  // Collect all affected productIds before the transactions
+  const affectedProductIds = [
+    ...new Set(stale.flatMap((sub) => sub.orderItems.map((oi) => oi.productId))),
+  ];
 
   await Promise.all(
     stale.map((sub) =>
       prisma.$transaction([
         prisma.subOrder.update({
-          where: { id: sub.id },
+          where: { id: sub.id, status: "PENDING", },
           data: {
             status: "CANCELLED",
             cancelledAt: new Date(),
@@ -104,4 +122,13 @@ export async function releaseAllExpiredPendingOrders(): Promise<void> {
       ),
     ),
   );
+
+  // Invalidate after writes complete — not before, not fire-and-forget
+  if (affectedProductIds.length > 0) {
+    await Promise.all(
+      affectedProductIds.map((id) => cacheInvalidate.product(id, ""))
+    );
+    // product list pages contain distance_km + min_price — must invalidate all
+    // cacheInvalidate.product already calls cacheDelPattern("kridha:products:*")
+  }
 }

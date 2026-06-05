@@ -390,8 +390,194 @@ User input
 
 ---
 
+---
+# Fix the Prisma adapter error for Database_url
+
+-> In Prisma 7, when using an adapter like @prisma/adapter-pg, PrismaClient must be created with a valid options object.
+-> import { PrismaPg } from "@prisma/adapter-pg";
+-> const adapter = new PrismaPg({
+  connectionString:
+    process.env.NODE_ENV === "production"
+      ? process.env.DATABASE_URL!
+      : (process.env.DIRECT_URL ?? process.env.DATABASE_URL!),
+});
+
+-> const prisma = new PrismaClient({
+  adapter,
+});
+
+##  Prisma 7 requirements:
+-> prisma.config.ts for Migrate
+-> adapter for the runtime client
+
+## Why DATABASE_URL is still in db.ts
+Because my runtime client is using @prisma/adapter-pg, Prisma no longer auto-reads the connection URL from schema.prisma. I have to explicitly pass it in the adapter config. In production, it uses DATABASE_URL (which is the pooled URL for Supabase). In development, it prefers DIRECT_URL (the non-pooled URL for migrations) but falls back to DATABASE_URL if DIRECT_URL is not set.
+
+### Supabase connection url must have spaces & special characters encoded
+-> Supabase URLs often contain special characters (like `@`, `:`, `/`) in the username, password, or host. These must be percent-encoded to be parsed correctly by Prisma and PostgreSQL.
+
+---
+
+---
+### Production - Migration Steps
+1. Ensure all migrations are applied to the new Supabase database using `npx prisma migrate deploy`.
+2. Update environment variables in production to point to the new Supabase database.
+3. Verify that the application can connect to the new database and that all features work as expected.
+
+## Step 1 — Point your env to Supabase temporarily
+Open your .env file and confirm these point to Supabase, not Docker:
+### # .env — switch to Supabase values before running any migration commands
+
+### DATABASE_URL="postgresql://postgres.[ref]:[password]@aws-0-[region].pooler.supabase.com:6543/postgres?pgbouncer=true"
+### DIRECT_URL="postgresql://postgres.[ref]:[password]@aws-0-[region].pooler.supabase.com:5432/postgres"
+The DIRECT_URL is what Prisma uses for migrations — it bypasses PgBouncer and connects directly. Migrations must use the direct connection, not the pooled one.
+
+## Step 2 — Check what Supabase currently knows
+### npx prisma migrate status
+What this does: Reads prisma/migrations/ folder and compares against the _prisma_migrations table in whichever DB your DIRECT_URL points to. Shows which migrations are applied, pending, or failed.
+
+### Expected output before deploy:
+Following migration(s) have not yet been applied:
+  20260516093336_add_user_session_model
+
+## Step 3 — Apply all pending migrations to Supabase
+### npx prisma migrate deplo
+What this does:
+Reads every .sql file in prisma/migrations/ in chronological order
+Checks _prisma_migrations table in Supabase to see which are already applied
+Runs only the ones not yet applied
+Records each in _prisma_migrations on success
+Stops immediately if any migration fails — does not skip or continue
+
+What it does NOT do:
+Does not reset anything
+Does not create new migrations
+Does not run prisma generate
+Does not touch your data
 
 
+## Step 4 — Regenerate Prisma client
+### npx prisma generate
+What this does: Regenerates the TypeScript client based on your schema.prisma. Run this after every migration deploy so your code matches the new schema.
+
+## Step 5 — Verify
+### npx prisma migrate status
+All migrations should now show Applied.
+
+## Step 6 — Switch env back to Docker for local dev
+ ### # .env — switch back to Docker values
+
+DATABASE_URL="postgresql://kridha:secret@localhost:5432/kridha_dev"
+
+DIRECT_URL="postgresql://kridha:secret@localhost:5432/kridha_dev"
+
+---
+
+---
+# How to Avoid the Location Column Loop — Permanently
+
+## Why It Happens?
+The location column on Product is:
+### prisma:  location Unsupported("geography(Point, 4326)")?
+Prisma marks it Unsupported — it knows this type exists but cannot manage it. The problem occurs when you run prisma migrate dev to create a new migration for something else (like userSession). Prisma introspects the schema, sees the location column, and sometimes generates SQL that tries to ALTER TABLE "Product" ALTER COLUMN "location" — which Postgres rejects because generated columns cannot be altered with standard syntax.
+
+## The Prevention Protocol — Follow Every Time You Create a New Migration
+Never use this:
+npx prisma migrate dev --name "your_migration"    # ← creates AND applies immediately
+Always use this instead:
+### Step 1: Create the migration file WITHOUT applying it
+npx prisma migrate dev --create-only --name "your_migration"
+What --create-only does: Generates the SQL file in prisma/migrations/ but does not execute it. Gives you a chance to inspect and edit first.
+
+### Step 2: Open and inspect the generated SQL file
+#### File will be at: prisma/migrations/<timestamp>_your_migration/migration.sql
+
+In VS Code terminal:
+#### View the file (replace timestamp)
+prisma\migrations\20260516093336_add_user_session_model\migration.sql
+
+### Step 3: Search for and delete any line touching location:
+Look for anything like:
+#### sql:
+-- DELETE any of these if present:
+ALTER TABLE "Product" ALTER COLUMN "location" SET DEFAULT ...;
+ALTER TABLE "Product" ALTER COLUMN "location" DROP DEFAULT;
+ALTER TABLE "Product" ADD COLUMN "location" ...;
+
+The migration should only contain SQL for your actual change (userSession table in this case). If location appears anywhere, delete those lines entirely.
+
+### Step 4: Apply the clean migration:
+#### npx prisma migrate dev
+This applies only what's pending — your now-clean migration file.
+
+
+---
+
+---
+# What If I am Already in the Error Loop
+## If I hit P3006 or P3018 again:
+
+### 1. Find the name of the failed migration
+npx prisma migrate status
+
+### 2. Mark it as rolled back (removes the failed flag)
+npx prisma migrate resolve --rolled-back "20260516093336_add_user_session_model"
+
+### 3. Delete the bad migration folder
+rmdir /s /q "prisma\migrations\20260516093336_add_user_session_model"
+
+### 4. Recreate it cleanly
+npx prisma migrate dev --create-only --name "add_user_session_model"
+
+### 5. Inspect and remove any location column SQL
+type prisma\migrations\<new_timestamp>_add_user_session_model\migration.sql
+
+### 6. Apply the clean migration
+npx prisma migrate dev
+
+### 7. Confirm clean state
+npx prisma migrate status
+
+---
+
+---
+# Step By Step Production Seed 🚀
+## 1. Set Supabase DIRECT_URL
+
+Example:
+DIRECT_URL=postgresql://postgres:PASSWORD@db.xxx.supabase.co:5432/postgres
+
+NOT:
+pooler URL
+pgbouncer URL
+
+Use:
+direct connection.
+
+## 2. Keep DATABASE_URL Optional
+
+For seeding:
+DATABASE_URL=pooled-url
+DIRECT_URL=direct-url
+
+Fine. My seed prioritizes DIRECT_URL already.
+
+## 3. Run Migrations FIRST 🚨
+
+Before seed:
+npx prisma migrate deploy
+
+on production DB.
+
+Otherwise:
+tables missing
+enums missing
+PostGIS columns missing.
+
+## 4. Run Seed
+npx prisma db seed
+
+---
 
 <!-- 7. Docker Setup for my app
 

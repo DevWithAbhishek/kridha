@@ -44,7 +44,7 @@ export function setAuthCookies(
 
   res.cookies.set("kridha_access_exp", String(accessExp), {
     httpOnly: false, // Must be readable by JS
-    secure: process.env.NODE_ENV === "production",
+    secure: IS_PROD,
     sameSite: "strict",
     path: "/",
     maxAge: 15 * 60, // Same lifetime as access token

@@ -67,8 +67,24 @@ export const authService = {
     const hash = user?.pinHash ?? DUMMY_HASH;
     const valid = await verifyByArgon(hash, input.pin);
 
-    if (!user || !valid) {
-      const attempts = (user?.pinAttempts ?? 0) + 1;
+    if (!user) {
+      throw ERR.INVALID_CREDENTIALS;
+    }
+
+    if (user.pinLockedUntil && user.pinLockedUntil > new Date()) {
+      logger.warn(
+        {
+          event: "auth.pin_locked",
+          userId: user.id,
+          ip,
+        },
+        "login attempted on locked account",
+      );
+      throw ERR.PIN_LOCKED;
+    }
+
+    if (!valid) {
+      const attempts = (user.pinAttempts ?? 0) + 1;
       logger.warn(
         {
           event: "auth.login_failed",
@@ -86,30 +102,12 @@ export const authService = {
           "warning",
         );
       }
-
-      if (user) {
-        const lockedUntil = getLockDuration(attempts)
-          ? new Date(Date.now() + getLockDuration(attempts)!)
-          : null;
-        await authRepo.updateUserLoginAttempts(user.id, attempts, lockedUntil);
-      }
-
-      const delay = 800 + Math.random() * 700;
-      await new Promise((r) => setTimeout(r, delay)); // to make fake users delay attacks
+      const lockedUntil = getLockDuration(attempts)
+        ? new Date(Date.now() + getLockDuration(attempts)!)
+        : null;
+      await authRepo.updateUserLoginAttempts(user.id, attempts, lockedUntil);
 
       throw ERR.INVALID_CREDENTIALS;
-    }
-
-    if (user.pinLockedUntil && user.pinLockedUntil > new Date()) {
-      logger.warn(
-        {
-          event: "auth.pin_locked",
-          userId: user.id,
-          ip,
-        },
-        "login attempted on locked account",
-      );
-      throw ERR.PIN_LOCKED;
     }
 
     await authRepo.updateUserLoginAttempts(user.id, 0, null);

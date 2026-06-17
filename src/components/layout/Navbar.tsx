@@ -44,6 +44,7 @@ export function Navbar() {
               className="hidden md:block"
             />
           </Link>
+          <Link href="/engineering"> Engineering </Link>
         </div>
         <div className="hidden md:flex items-center gap-3">
           <LanguageToggle />

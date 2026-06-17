@@ -196,13 +196,13 @@ function FilterPanel({
             type="range"
             min="1"
             max="50"
-            value={Number(filters.radius ?? 10)}
+            value={Number(filters.radius ?? 25)}
             onChange={(e) => onChange("radius", Number(e.target.value))}
             className="w-full"
           />
 
           <div className="text-sm text-muted mt-1">
-            {filters.radius ?? 10} km
+            {filters.radius ?? 25} km
           </div>
         </div>
 
@@ -290,7 +290,7 @@ export default function ProductsPage() {
   const [filters, setFilters] = useState<
     Record<string, string | boolean | number | undefined>
   >({
-    radius: 10,
+    radius: 25,
   });
   const [filterOpen, setFilterOpen] = useState(false);
   const loadMoreRef = useRef<HTMLButtonElement>(null);

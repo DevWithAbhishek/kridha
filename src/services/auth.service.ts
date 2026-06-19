@@ -85,6 +85,11 @@ export const authService = {
 
     if (!valid) {
       const attempts = (user.pinAttempts ?? 0) + 1;
+      const lockedUntil = getLockDuration(attempts)
+        ? new Date(Date.now() + getLockDuration(attempts)!)
+        : null;
+      await authRepo.updateUserLoginAttempts(user.id, attempts, lockedUntil);
+      
       logger.warn(
         {
           event: "auth.login_failed",
@@ -102,10 +107,6 @@ export const authService = {
           "warning",
         );
       }
-      const lockedUntil = getLockDuration(attempts)
-        ? new Date(Date.now() + getLockDuration(attempts)!)
-        : null;
-      await authRepo.updateUserLoginAttempts(user.id, attempts, lockedUntil);
 
       throw ERR.INVALID_CREDENTIALS;
     }

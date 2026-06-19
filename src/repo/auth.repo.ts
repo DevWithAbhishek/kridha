@@ -7,10 +7,12 @@ export const authRepo = {
     pinAttempts: number,
     pinLockedUntil: Date | null,
   ) {
-    await prisma.user.update({
-      where: { id },
-      data: { pinAttempts, pinLockedUntil },
-    });
+    await prisma.$transaction([
+      prisma.user.update({
+        where: { id },
+        data: { pinAttempts, pinLockedUntil },
+      })
+    ])
   },
 
   async updateUserPin(userId: string, pinHash: string) {

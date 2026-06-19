@@ -8,7 +8,6 @@ import {
 import type { GetProductsInput, GetSellerProductsInput } from "@/schemas";
 import { Product } from "@prisma/client";
 import { PriceTier } from "@/types/dashboard";
-import { logger } from "@/lib/logger";
 import {
   withCache,
   CK,
@@ -153,13 +152,13 @@ export const productRepo = {
     const safePage = Math.max(1, input.page ?? 1);
     const safeLimit = Math.min(50, Math.max(1, input.limit ?? 20));
     const offset = (safePage - 1) * safeLimit;
-    const radiusM = (input.radius ?? 10) * 1000;
+    const radiusM = (input.radius ?? 25) * 1000;
 
     // ── Cache key: round lat/lng to 3dp so nearby users share cache ─────
     const cacheKey = CK.productList(
       input.lat,
       input.lng,
-      input.radius ?? 10,
+      input.radius ?? 25,
       safePage,
       {
         category: input.category,

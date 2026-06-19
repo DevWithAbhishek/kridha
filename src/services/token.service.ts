@@ -30,7 +30,7 @@ function createJwtToken(userId: string, roles: Role[]) {
 
 function parseUserAgent(ua: string): string {
   if (ua.includes("Chrome")) return "Chrome Browser";
-  if (ua.includes("FireFox")) return "FireFox Browser";
+  if (ua.includes("Firefox")) return "FireFox Browser";
   if (ua.includes("Safari")) return "Safari Browser";
   if (ua.includes("Edge")) return "Edge Browser";
   if (ua.includes("Brave")) return "Brave Browser";

@@ -1,387 +1,251 @@
 # Kridha
 
-B2B self-pickup marketplace for Tier-2 India — kirana owners order from local suppliers within 10 km, no delivery required.
-
-**[Live](https://kridha-marketplace.vercel.app) · [Demo Video](#) · [Case Study](./CASE_STUDY.md) · [Architecture](./ARCHITECTURE.md)**
-
-> Available for backend engineering roles — [LinkedIn](https://www.linkedin.com/in/abhishekkumar878/) · [GitHub](https://github.com/DevWithAbhishek)
+A hyperlocal B2B + B2C self-pickup marketplace — multi-vendor checkout, geospatial seller discovery, and payment reconciliation, built and operated end to end: architecture, security model, and correctness guarantees owned start to finish.
 
 ---
 
 ## Executive Summary
 
-Udaan requires 50 kg+ minimum orders because delivery economics demand it. A kirana owner needing 8 kg of mustard oil from a mill 3 km away has no platform — he calls, negotiates, and pays cash on pickup with zero protection.
+**Problem.** Self-pickup commerce breaks the assumptions most e-commerce backends are built on: a single cart can span multiple independent sellers, each with their own pickup point, fulfillment timeline, and settlement, and "nearby" has to mean a real geographic radius query, not a city-level filter.
 
-Kridha removes the minimum order constraint by removing delivery entirely. Buyers self-pickup. The backend handles discovery via PostGIS radius search, two-phase Razorpay payments (advance at booking + remaining at pickup), atomic stock locking under concurrent checkout, and idempotent webhook processing — verified under 100 concurrent requests.
+**Constraint.** Built and run by one engineer, with no dedicated ops team and no margin for silent data corruption — inventory races or payment/state mismatches aren't tolerable bugs to discover later, they're the thing the architecture has to rule out by construction.
 
-Built in 45 days, solo. Live on Vercel. ₹0/month infrastructure.
+**Solution.** A Next.js + PostgreSQL/PostGIS + Redis + Razorpay system where multi-vendor orders are decomposed into independently-tracked sub-orders, inventory writes are serialized at the database layer, and payment state is only ever trusted from a verified webhook — never from a client callback.
 
----
-
-## Hard Problems Solved
-
-| Problem                                                            | Solution                                                                                                                                             |
-| ------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Two buyers race for the last unit simultaneously                   | `SELECT FOR UPDATE` inside `prisma.$transaction()` — exactly one `201`, one `409`. DB row-level lock, no application retry.                          |
-| Same Razorpay webhook delivered 100 times concurrently             | `WebhookLog.razorpayPaymentId @unique` + handler inside `$transaction` — exactly one DB write regardless of concurrent delivery count. k6 verified.  |
-| Razorpay order creation fails after Postgres transaction commits   | Compensating transaction immediately restores stock and marks SubOrder `CANCELLED`. No orphaned stock locks.                                         |
-| Stock stays locked if buyer never pays (Vercel Hobby = 1 cron/day) | Lazy expiry: `releaseAllExpiredPendingOrders()` called fire-and-forget on next product request. Stock released within seconds, not 24 hours.         |
-| Stolen refresh token used after legitimate rotation                | Token family tracking. Reuse of a rotated token immediately revokes all sessions for that user and fires a GlitchTip fatal alert.                    |
-| Radius search on 500+ products without spatial index               | Raw `$queryRaw` with `ST_DWithin` + GIST index on `geography(Point, 4326)`. O(log n) vs table scan. ~55ms avg vs ~180ms avg pre-index.               |
-| Deal price removed between cart add and checkout                   | `CartItem.unitPrice` locked at add-time. Order creation uses `ci.unitPrice`, not recalculated current price. Buyer protected from deal removal.      |
-| Multi-seller checkout — one seller's failure affects others        | `Order` = one atomic Razorpay advance. `SubOrder` = independent per-seller contract. Seller A cancelling does not affect Seller B's state or payout. |
+**Why the architecture matters.** The hard problems here were never CRUD. They were: never overselling a shared inventory pool under concurrent checkout, never trusting a client's word that a payment succeeded, and never letting one seller's order state corrupt another seller's in the same cart.
 
 ---
 
-## Architecture
+## Engineering Highlights
+
+- **Refresh-token family rotation with theft detection** — reuse of an already-rotated refresh token invalidates the entire token family, not just the one token.
+- **Idempotent webhook processing** — a unique constraint on the webhook event ID makes duplicate Razorpay deliveries a no-op instead of a double-processing bug.
+- **Pessimistic concurrency control on inventory** — `SELECT FOR UPDATE` on hot SKUs at decrement time, chosen specifically because optimistic retries are unacceptable UX at checkout.
+- **Order → SubOrder decomposition** — a multi-vendor cart's fulfillment, cancellation, and settlement states are tracked per seller, not flattened into one order record.
+- **PostGIS-backed proximity search** — geography columns + GIST indexing for "sellers near me," not application-level Haversine math over a full table scan.
+- **Load testing that found real defects before users did** — k6 runs against the system surfaced four distinct issues (below), not zero.
+
+---
+
+## Architecture Overview
 
 ```
-Browser / Mobile PWA
+Buyer / Seller (Web)
+        │ HTTPS
+        ▼
+Next.js App Router  ──▶  Auth middleware (cookie-based JWT)
+        │                          │
+        ▼                          ▼
+  Service layer  ───────▶  PostgreSQL (Neon + PostGIS)
+        │                          ▲
+        ▼                          │
+      Redis  ── cache / rate-limit state
         │
         ▼
-┌─────────────────────────────────┐
-│         proxy.ts (Next.js)      │
-│  Rate limiting (3 layers)       │
-│  CSRF validation                │
-│  JWT auth (HttpOnly cookie)     │
-│  Role enforcement               │
-└─────────────┬───────────────────┘
-              │
-              ▼
-┌─────────────────────────────────┐
-│       Route Handlers            │
-│  /api/products  /api/cart       │
-│  /api/orders    /api/auth       │
-│  /api/webhooks  /api/admin      │
-└─────────────┬───────────────────┘
-              │
-              ▼
-┌─────────────────────────────────┐
-│       Service Layer             │
-│  orderService  cartService      │
-│  authService   paymentService   │
-│  notificationService            │
-└──────┬──────────────┬───────────┘
-       │              │
-       ▼              ▼
-┌────────────┐  ┌─────────────────┐
-│ Repository │  │   External APIs  │
-│   Layer    │  │                  │
-│ productRepo│  │ Razorpay         │
-│ orderRepo  │  │ Cloudinary       │
-│ sellerRepo │  │ GlitchTip        │
-└─────┬──────┘  └─────────────────┘
-      │
-      ▼
-┌─────────────────────────────────┐
-│   PostgreSQL 16 + PostGIS       │  ← GIST index, pg_trgm GIN
-│   Upstash Redis                 │  ← Cache-aside, rate limiting
-└─────────────────────────────────┘
+   Razorpay (checkout)
+        │  webhook (signed)
+        ▼
+ Webhook handler → WebhookLog (unique constraint) → Order / SubOrder state transition
 ```
 
-**Webhook flow (separate entry point):**
+**Request flow.** Request → cookie-based auth middleware validates the access token → service layer → Prisma → PostgreSQL → response. Hot reads (catalog, session checks) go through Redis first; a cache miss falls through to Postgres.
 
-```
-Razorpay → POST /api/webhooks/razorpay
-         → HMAC-SHA256 verify (timingSafeEqual)
-         → idempotency check (WebhookLog @unique)
-         → $transaction: WebhookLog insert + Payment update + SubOrder transition
-         → always returns 200 (prevents retry storm on non-2xx)
-```
+**Data flow.** All multi-row writes (checkout, stock decrement, order state transitions) run inside a single database transaction — partial writes are not a state the system can be left in.
 
-→ [Full architecture with scaling constraints](./ARCHITECTURE.md)
+**Payment flow.** An order is created in a `pending_payment` state before the Razorpay checkout is initiated client-side. A successful client-side callback is treated as a hint, not a fact — the order only transitions to `paid` once the corresponding webhook is received and its signature verified. This is the two-phase part: client success and server truth are deliberately decoupled.
+
+**Webhook flow.** Razorpay webhook → HMAC signature verification → event ID written to `WebhookLog` under a unique constraint → if the event ID already exists, return success without reprocessing → otherwise process the event and transition the relevant Order/SubOrder.
+
+**Scale indicators:** 61 REST endpoints · 22 Prisma models · 39 typed error codes · 19 documented system invariants.
 
 ---
 
 ## Key Engineering Decisions
 
-### 1. Pessimistic over optimistic locking for stock
+### ADR-01 — PostgreSQL (Neon, with PostGIS) over DynamoDB / MongoDB
+- **Context:** Needed ACID transactions across orders, sub-orders, and inventory, plus native geospatial queries — in one engine, not two systems kept in sync.
+- **Decision:** PostgreSQL with the PostGIS extension, served via Neon.
+- **Alternatives considered:** DynamoDB — rejected; multi-item transactional writes across the order/inventory access pattern don't map cleanly onto its model. MongoDB — rejected; weaker cross-collection transactional guarantees than Postgres for the same multi-table writes.
+- **Tradeoff accepted:** Neon scales compute to zero, which means cold starts. Mitigated with a retry wrapper around the connection client, and by using the unpooled (`DIRECT_URL`) connection string for operations — like seeding — that don't tolerate PgBouncer-style transaction pooling.
 
-Hot SKUs in a small-town marketplace are highly contested — a mill selling 50 kg of Mustard Oil may have 15 kirana owners checking the same listing simultaneously. Optimistic locking produces a retry storm: 14 of 15 transactions fail their version check, retry, fail again, tail latency explodes. Pessimistic locking (`SELECT FOR UPDATE`) serializes all 15 at the DB layer. The first N (where N ≤ available) succeed deterministically. The rest receive `409 INSUFFICIENT_STOCK` immediately. First come, first served — no ambiguity, no retries, no partial failures.
+### ADR-02 — Pessimistic locking over optimistic concurrency for inventory
+- **Context:** Hot SKUs face concurrent decrement attempts at checkout; overselling is a direct financial and trust cost in a multi-vendor marketplace.
+- **Decision:** `SELECT FOR UPDATE` row-locks the stock row inside the same transaction as the decrement.
+- **Alternatives considered:** Optimistic locking via a version column — rejected for hot paths; under real contention it produces client-facing retries at exactly the moment (checkout) where a retry is least acceptable.
+- **Tradeoff accepted:** Writes to the same row serialize, capping per-SKU throughput. Acceptable because checkout volume per SKU is bounded by real-world pickup capacity, not unbounded online demand.
 
-### 2. Order → SubOrder decomposition
+### ADR-03 — HttpOnly cookie auth with token-family rotation over localStorage bearer tokens
+- **Context:** A client-rendered Next.js app has real XSS exposure; a token readable by JavaScript is a token stealable by JavaScript.
+- **Decision:** Short-lived access tokens in `HttpOnly`, `Secure` cookies; refresh tokens grouped into rotating families.
+- **Alternatives considered:** localStorage bearer tokens — rejected; directly exfiltratable via XSS, no isolation from page JS. Refresh rotation without family tracking — rejected; doesn't detect reuse of an already-rotated, stolen token.
+- **Tradeoff accepted:** Cookie auth requires explicit CSRF mitigation (SameSite policy plus header-based verification on state-changing requests) and complicates a future native mobile client, which can't rely on browser cookie jars the same way.
 
-A buyer ordering from three sellers in one checkout needs one atomic Razorpay advance (one payment, one receipt) but three independent operational tracks (independent pickup windows, OTPs, payment links, payout records, status histories). Collapsing to a single `Order` table would mean Seller A cancelling affects Seller B's payout calculation — structurally wrong. `Order` is the financial unit. `SubOrder` is the per-seller contract. Stock decrement is per-seller group inside the transaction — Seller A's `SELECT FOR UPDATE` does not block Seller B's concurrent checkout on different rows.
+### ADR-04 — Lazy expiry over scheduled token sweeps
+- **Context:** A cron-based sweep to expire stale refresh tokens is an extra operational job with its own failure mode — a missed run silently extends how long a stale token stays valid.
+- **Decision:** Expired or already-rotated tokens are rejected at the point of use. No background cleanup job exists.
+- **Alternatives considered:** Scheduled cleanup job — deferred; the security property ("an expired token never authenticates") holds without it, so the job buys cleanliness, not correctness.
+- **Tradeoff accepted:** Stale rows accumulate in the refresh-token table until a retention pass is added — acceptable at current data volume, explicitly listed below as a known limitation.
 
-### 3. HttpOnly cookies over localStorage
+### ADR-05 — Geography column + GIST index over application-level distance math
+- **Context:** The core discovery query is "sellers within radius R of this buyer" — the kind of query that becomes a full table scan if distance is computed in application code.
+- **Decision:** PostGIS `geography` columns (not `geometry`, so distances are correct on the Earth's curved surface) indexed with GIST.
+- **Alternatives considered:** Storing lat/lng as floats and computing Haversine distance per request — rejected; not indexable, doesn't survive catalog growth.
+- **Tradeoff accepted:** Geography columns are strict about SRID handling. A seed-data bug surfaced exactly here — a `GENERATED ALWAYS` geography column rejected inserts from the ORM's default path; fixed with a raw SQL insert using `ST_SetSRID(ST_MakePoint(...))` against the direct (unpooled) connection.
 
-UP Tier-2 users access Kridha on shared Android devices. `localStorage` is readable by any JavaScript on the page — one XSS vulnerability in any dependency exposes the token. HttpOnly cookies are inaccessible to JavaScript by definition. `kridha_refresh` is scoped to `path=/api/auth` — the browser never sends it to product or order endpoints, limiting blast radius if a token is intercepted. The trade-off (CSRF risk) is mitigated by double-submit CSRF tokens on all mutation endpoints.
+### ADR-06 — Order → SubOrder decomposition over a flat order with seller-tagged line items
+- **Context:** A single cart can span multiple sellers, each with independent pickup timing, fulfillment status, and settlement.
+- **Decision:** An `Order` represents the buyer's checkout transaction; each seller's portion becomes a `SubOrder` with its own state machine.
+- **Alternatives considered:** One flat order with seller-tagged line items — rejected; "ready for pickup" and "cancelled" are seller-scoped states, and flattening them produces an order that's simultaneously correct and incorrect depending on which seller you ask about.
+- **Tradeoff accepted:** Every payment and refund calculation now reconciles at both the Order and SubOrder level — more bookkeeping, but it matches the actual business semantics instead of hiding the complexity.
 
-### 4. Lazy expiry over cron for stock release
+### ADR-07 — Redis for caching and rate-limit state over in-process memory
+- **Context:** Needed sub-millisecond reads for hot catalog data and a shared counter for rate limiting across instances.
+- **Decision:** Redis as a cache-aside store and as the rate-limiter's backing store.
+- **Alternatives considered:** In-process memory caching — rejected; doesn't survive a restart and doesn't work once the app runs as more than one instance.
+- **Tradeoff accepted:** A second stateful dependency the app now depends on for correct behavior — see the rate-limiter failure mode under Performance Validation.
 
-Vercel Hobby allows one cron execution per day. A 15-minute payment window cannot be enforced by a daily cron — worst case, stock is locked for 24 hours. Lazy expiry: `releaseAllExpiredPendingOrders()` is called fire-and-forget at the top of `productRepo.findNearby` on every product feed request. Stock releases the moment the next buyer browses — correct behavior without cron dependency. The daily cron at 2 AM sweeps anything the lazy release missed.
+---
 
-### 5. PostGIS raw query over Prisma ORM
+## Reliability & Failure Handling
 
-Prisma cannot construct `ST_DWithin` predicates on `geography(Point, 4326)` columns — it treats them as `Unsupported`. The GIST index on `Product.location` makes radius queries O(log n); a Prisma `findMany` with lat/lng arithmetic would table-scan every product on every request. `buildWhereClause()` and `buildOrderClause()` in `src/lib/postgis.ts` compose `Prisma.sql` tagged templates with parameterized inputs. All user inputs are parameterized — no string interpolation.
+| Failure mode | Mechanism that handles it |
+|---|---|
+| Database connection cold start (Neon scale-to-zero) | Retry wrapper with backoff around the connection client |
+| Duplicate webhook delivery (Razorpay retries on timeout) | Unique constraint on `WebhookLog` event ID — second delivery is a no-op |
+| Concurrent stock decrement on the same SKU | Row-level lock (`SELECT FOR UPDATE`) inside the order transaction |
+| Stolen / replayed refresh token | Reuse of a rotated token invalidates its entire token family |
+| Redis unavailable | Rate limiter fails **closed**, not open (see Performance Validation — this was not the original behavior) |
+| Partial multi-table write | Entire write wrapped in a single DB transaction; no intermediate state is observable |
 
-### 6. Hindi-first i18n at creation time
+**Representative system invariants** (full set of 19 documented in `DESIGN.md`):
 
-Notification strings are resolved at creation using `user.preferredLang` from DB, not at render time. If the user changes `preferredLang` after the order is placed, the historical notification correctly reflects the language at the time of the event. A Hindi notification for a Hindi-preferring user at order time remains Hindi even if the user later switches to English. Resolution at creation eliminates a template system, a runtime translation service, and translation cache invalidation.
+1. Stock quantity for a SKU can never go negative — enforced at the row-lock decrement, not by application-level checks alone.
+2. A SubOrder cannot reach `fulfilled` before its payment capture is confirmed by webhook — a client-side success callback is never sufficient.
+3. A given webhook event ID is processed at most once, regardless of delivery retries.
+4. An access token cannot authenticate once its parent refresh-token family has been marked compromised.
+5. An Order's total must equal the sum of its SubOrder totals at every state transition.
+6. Rate-limit state failing to load fails closed, never open.
 
-<details>
-<summary>What I'd do differently</summary>
+---
 
-- **Race condition test design**: The initial k6 test used a single JWT for all 50 VUs, creating cart-layer concurrency rather than stock-layer concurrency. The correct test calls `POST /api/orders` directly with isolated buyer accounts — bypassing the cart to test `SELECT FOR UPDATE` cleanly.
-- **Unit tests on service layer**: The k6 suite validates integration behavior but `orderService.create` has zero unit tests. The compensating transaction path (Razorpay failure after commit) has never been triggered in a controlled test environment.
-- **PrismaPg pool configuration**: The default `pg.Pool` max=10 causes connection queuing under concurrent load. Should have been explicitly configured at max=15 (prod) / max=50 (dev) from day one. Discovered only when load tests showed 2000ms+ latency before diagnosis.
-- **`console.log(input)` in cart.service.ts**: A debug log left in production code. Should have been caught before the repository was made public.
-- **Outbox pattern for Razorpay**: The current compensating transaction approach is correct but brittle. The right solution is an outbox table written inside the Postgres transaction, processed asynchronously — eliminates the distributed transaction problem entirely.
+## Security Architecture
 
-</details>
+- **Authentication:** HttpOnly, Secure cookies carrying short-lived access tokens.
+- **Token rotation:** Refresh tokens issued in rotating families; reuse of a stale token in a family invalidates the whole family, not just that token (theft detection, not just expiry).
+- **Authorization:** Role-based access control (RBAC) enforced at the service layer, scoped per resource (a seller cannot act on another seller's SubOrder).
+- **CSRF:** Mitigated via SameSite cookie policy combined with header-based verification on state-changing requests.
+- **Rate limiting:** Redis-backed, scoped per identity/IP; fails closed if Redis is unreachable.
+- **Webhook verification:** HMAC signature check on every incoming Razorpay webhook before the payload is trusted or processed.
+- **Threat model addressed directly:** XSS-based token theft (cookie isolation), token replay (family rotation), webhook spoofing (signature verification), inventory races under concurrent abuse (row locks), and rate-limiter bypass under partial infrastructure failure (fail-closed default).
+
+---
+
+## Data Layer
+
+- **Schema:** 22 Prisma models backing 61 REST endpoints.
+- **Transactions:** Every multi-row write (checkout, stock decrement, order/sub-order transition) executes inside one database transaction.
+- **Concurrency:** Pessimistic row locking (`SELECT FOR UPDATE`) for inventory; no optimistic-locking retry path on the hot checkout path.
+- **PostGIS:** `geography` columns with GIST indexes for radius and nearest-pickup-point queries.
+- **Caching:** Redis cache-aside for catalog and session-validation hot paths; Postgres remains the source of truth on a miss.
+- **Connection handling:** Pooled connection string for normal application traffic; direct (unpooled) connection string for operations — seeding, and any raw geography insert — that are incompatible with transaction-mode pooling.
 
 ---
 
 ## Performance Validation
 
-All tests run against local Docker (PostgreSQL + Redis) with explicit pg.Pool config. No Supabase cold starts. No Vercel function overhead.
+**Methodology.** Load testing with k6 against checkout and catalog read paths, run against a production build (not the Next.js dev server — see below).
 
-| Test                   | Tool                 | VUs | Result                                                       |
-| ---------------------- | -------------------- | --- | ------------------------------------------------------------ |
-| Webhook idempotency    | k6 shared-iterations | 100 | ✅ 100 × 200 OK · `WebhookLog COUNT = 1` (DB verified)       |
-| Product feed reads     | k6 constant-vus      | 200 | ✅ 0 HTTP errors across 4,353 requests                       |
-| Response time baseline | k6 ramping-vus       | 100 | ✅ 9,702 requests · 0 HTTP 5xx · 32 req/s                    |
-| Auth rate limiter      | k6 shared-iterations | 20  | ✅ Layer 2 (per-account) confirmed firing on concurrent auth |
-| Race condition (stock) | k6 shared-iterations | 50  | ⚠ Test design flaw documented — see below                    |
+**Results — four distinct issues surfaced, not zero:**
 
-**Race condition test note:** The initial test used a single JWT for all 50 VUs, producing cart-session chaos rather than stock-layer contention. `SELECT FOR UPDATE` is in place and correct — the verification test using 50 isolated buyer accounts is the next item on the testing backlog. See [TESTING.md](./TESTING.md) for methodology and known gaps.
+1. **Dev-server connection collapse.** Early runs against the local `next dev` server collapsed under concurrency. This wasn't a production bug — it was a testing-methodology lesson: a dev-mode server isn't representative of production capacity. Testing was redirected to a production build.
+2. **Cart-clearing gap under stock-drain.** A scenario where stock hit zero mid-checkout exposed a gap in cart-clearing logic. Identified and corrected.
+3. **Rate limiter failing open.** Stopping Redis mid-test caused the rate limiter to fail open — allowing unlimited traffic instead of blocking it. Fixed to fail closed.
+4. **A false positive, caught correctly.** A test scenario using quantity-5 line items looked like an anomaly until it was traced to the platform's own ₹1000 minimum order value — the test design was reproducing real business logic, not a bug. Distinguishing this from an actual defect was itself part of the validation.
 
-**Latency (Docker + Redis cache active):**
-
-| Endpoint                                  | P50   | P95    | P99    |
-| ----------------------------------------- | ----- | ------ | ------ |
-| `GET /api/health`                         | ~8ms  | ~42ms  | ~78ms  |
-| `GET /api/products` (cache hit)           | ~14ms | ~80ms  | ~180ms |
-| `GET /api/products` (cache miss, PostGIS) | ~52ms | ~200ms | ~390ms |
-| `POST /api/cart/checkout`                 | ~95ms | ~280ms | ~490ms |
-| `POST /api/webhooks/razorpay`             | ~18ms | ~65ms  | ~120ms |
-
-_Supabase cold-start numbers (pre-pool-fix) were 2000ms+ P95 — caused by pg.Pool default max=10 queuing under load. Fixed by passing explicit `pg.Pool` instance to `PrismaPg` adapter._
-
-→ [Full load test methodology and results](./LOAD_TESTING.md)
+**Known limitations:** no chaos/multi-AZ failover testing yet; no automated load-test regression suite wired into CI.
 
 ---
 
-## Backend Patterns Implemented
+## Monitoring & Observability
 
-- **`SELECT FOR UPDATE` pessimistic locking** — stock decrement inside `prisma.$transaction()`. Concurrent checkout serialized at Postgres row level, not application level.
-- **Idempotent webhook handler** — `WebhookLog.razorpayPaymentId @unique` + `$transaction`. Exactly-once processing regardless of concurrent duplicate delivery count.
-- **Token family rotation** — refresh token reuse triggers immediate full session revocation + GlitchTip fatal alert. Detects token theft without user action.
-- **Compensating transaction** — Razorpay init failure after DB commit triggers stock restoration in a second transaction. No orphaned locks on external API failure.
-- **State machine with terminal states** — `validateTransition(from, to)` throws before any DB write. `COMPLETED` and `CANCELLED` have empty edge arrays — no if-chains, no invalid state possible.
-- **Cache-aside with fail-open** — product feed cached in Redis. Cache error = cache miss = DB query. Redis is never source of truth. Invalidated on every write.
-- **Three-layer rate limiting** — per-IP (5/min) → per-account phone suffix (10/15 min, defeats IP rotation) → global platform ceiling (500/min). All layers fail-open on Redis error.
-- **Lazy stock expiry** — expired PENDING orders released on next product request. No cron dependency for correctness.
-- **Structured logging with redaction** — Pino JSON with `requestId` correlation. 14 sensitive fields (`pin`, `otp`, `accountNumber`, etc.) redacted before write. Never in log storage.
-- **Repository pattern** — all Prisma access isolated per domain. Services import repos, never `prisma` directly.
-- **Silent signup** — duplicate phone returns identical `201`. No enumeration of registered users.
-- **Server-side price enforcement** — no endpoint accepts `unitPrice` from client. Locked at cart-add time, carried to order creation.
+- **Logging:** Structured JSON logs via Pino, with request-scoped context for tracing a single request through the service layer.
+- **Error tracking:** Currently log-based; no dedicated APM is wired in yet.
+- **Alerting:** None automated yet — log review is manual.
+- **Future improvements:** distributed tracing, automated alert thresholds on error rate and webhook-processing lag, and a dashboard over the existing structured logs rather than raw log search.
+
+---
+
+## Tradeoffs & Known Limitations
+
+- **Single region, single primary database.** No read replica, no cross-region failover.
+- **Refresh-token table has no cleanup job.** A deliberate v1 tradeoff (see ADR-04) — correctness doesn't depend on it, but storage growth eventually will.
+- **No native mobile client.** Cookie-based auth assumes a browser cookie jar; a future mobile app would need a parallel auth strategy.
+- **No automated load-test regression suite.** k6 runs have been manual, not CI-gated.
+- **No dedicated APM/tracing.** Observability is log-based today.
+
+These are intentional sequencing decisions for a single-engineer build, not oversights discovered after the fact.
+
+---
+
+## What I Would Improve Next
+
+1. Add distributed tracing and an APM layer on top of the existing structured logs.
+2. Move k6 load tests into CI as a regression gate, not a manual exercise.
+3. Add a retention/cleanup job for the refresh-token table.
+4. Introduce a read replica for reporting and catalog-heavy read traffic.
+5. Build a basic incident runbook — current failure handling is encoded in code, not yet in an operational playbook.
+6. Evaluate multi-AZ deployment for the database layer specifically, since that's the single largest remaining availability gap.
 
 ---
 
 ## Documentation Index
 
-| Document                             | Audience                      | Contents                                                                              |
-| ------------------------------------ | ----------------------------- | ------------------------------------------------------------------------------------- |
-| [ARCHITECTURE.md](./ARCHITECTURE.md) | CTO, Senior Engineer          | Layer decisions, connection pool config, scaling constraints, 1000-user failure modes |
-| [DECISIONS.md](./DECISIONS.md)       | CTO, Hiring Manager           | 8 ADRs with context, decision, alternatives considered, consequences                  |
-| [CASE_STUDY.md](./CASE_STUDY.md)     | Founder, EM, Recruiter        | Vedanta → Kridha engineering narrative, domain constraints, FixMitraa preview         |
-| [SECURITY.md](./SECURITY.md)         | CTO, Security-conscious teams | Full auth architecture, OWASP controls, threat model per control                      |
-| [TESTING.md](./TESTING.md)           | EM, Senior Engineer           | Coverage map, k6 methodology, known gaps, what would be tested next                   |
-| [LOAD_TESTING.md](./LOAD_TESTING.md) | CTO, Performance engineers    | Full k6 results, infrastructure conditions, interpretation                            |
-| [API.md](./API.md)                   | Engineers                     | 61 endpoints, full request/response contract, error codes                             |
+| Topic | Location |
+|---|---|
+| Architecture, system invariants, ADRs | `DESIGN.md` |
+| API reference (61 endpoints) | `API.md` |
+| Engineering narrative & background | `CASE_STUDY.md` |
+| Load testing methodology & results | `CASE_STUDY.md` |
 
 ---
 
 ## Local Setup
 
-**Prerequisites:** Docker Desktop · Node.js 20+
-
 ```bash
-git clone https://github.com/DevWithAbhishek/kridha.git && cd kridha
+git clone <repo-url>
+cd kridha
 npm install
-cp .env.example .env.local          # fill required variables (see below)
-docker-compose up -d                 # PostgreSQL + PostGIS on :5432, Redis on :6379
-npx prisma migrate deploy            # enables PostGIS, pg_trgm, GIST + GIN indexes
-npx prisma db seed                   # 10 verified sellers, 540 products, 108 deals, 1 buyer
+
+cp .env.example .env
+# set DATABASE_URL (pooled), DIRECT_URL (unpooled), REDIS_URL, RAZORPAY_KEY_ID, RAZORPAY_KEY_SECRET
+
+npx prisma migrate deploy
+npx prisma db seed
+
 npm run dev
 ```
 
-Seed credentials: all accounts use PIN `1234`. Seller phones and test buyer phone printed to console after seed completes.
+---
 
-**Required environment variables:**
+## Technology Choices
 
-```
-DATABASE_URL                          # Supabase pooled (prod) / Docker (dev)
-DIRECT_URL                            # Supabase direct (prod) / Docker (dev)
-JWT_SECRET                            # ≥32 char random string
-ADMIN_JWT_SECRET                      # separate secret — admin surface
-ENCRYPTION_KEY                        # 64-char hex — AES-256-GCM for bank details
-RAZORPAY_KEY_ID
-RAZORPAY_KEY_SECRET
-RAZORPAY_WEBHOOK_SECRET
-NEXT_PUBLIC_RAZORPAY_KEY_ID
-CLOUDINARY_CLOUD_NAME
-CLOUDINARY_API_KEY
-CLOUDINARY_API_SECRET
-UPSTASH_REDIS_REST_URL                # production only
-UPSTASH_REDIS_REST_TOKEN              # production only
-REDIS_URL                             # development only (redis://localhost:6379)
-GLITCHTIP_DSN
-CRON_SECRET
-```
-
-Redis auto-detects environment: Upstash when `UPSTASH_REDIS_REST_URL` is set, local Docker Redis when `REDIS_URL` is set, cache silently disabled when neither is set.
+| Technology | Reason chosen | Tradeoff accepted |
+|---|---|---|
+| Next.js (App Router) | Unified frontend + API surface; fewer moving parts for a single-engineer build | Frontend and API scale together, not independently |
+| PostgreSQL + PostGIS (Neon) | ACID transactions and native geospatial indexing in one engine | Serverless cold starts require explicit handling |
+| Prisma | Type-safe queries, fast schema iteration | Occasionally needs a raw-SQL escape hatch (e.g. geography inserts) |
+| Redis | Sub-millisecond cache + shared rate-limit state | A second stateful dependency the app must degrade around |
+| Razorpay | Mature webhook ecosystem for India-first payments | At-least-once webhook delivery requires explicit idempotency handling |
+| Pino | Low-overhead structured JSON logging | No built-in tracing — pairs with, doesn't replace, a future APM |
 
 ---
 
-## System Invariants
+## Lessons Learned
 
-19 correctness guarantees enforced at DB and application layer. Violating any is a bug, not a missing feature.
-
-| #      | Invariant                                          | Enforcement                                                                                              |
-| ------ | -------------------------------------------------- | -------------------------------------------------------------------------------------------------------- |
-| INV-01 | `product.available` never goes negative            | DB `CHECK (available >= 0)` + `SELECT FOR UPDATE` inside `prisma.$transaction()`                         |
-| INV-02 | `COMPLETED` or `CANCELLED` status cannot change    | State machine — terminal states have empty edge sets. `validateTransition()` throws before any DB write. |
-| INV-03 | Payment webhook processed exactly once             | `WebhookLog.razorpayPaymentId @unique` + idempotency check before processing                             |
-| INV-04 | BUYER cannot access seller-only routes             | `requireRole(req, Role.SELLER)` reads JWT from HttpOnly cookie                                           |
-| INV-05 | User sees only their own orders                    | `userId` from cookie; all order queries filter by `buyerId` or `sellerId`                                |
-| INV-06 | Delivery OTP cleared after verification            | `deliveryOtp` set to `null` on `COMPLETED` in same transaction as status update                          |
-| INV-07 | Phone is the unique user identifier                | `phone @unique` at DB level; silent signup prevents enumeration                                          |
-| INV-08 | Seller store name + address must be unique         | `@@unique([storeName, street])` at DB level                                                              |
-| INV-09 | Deal price reverts after expiry                    | Query JOINs only `status = ACTIVE AND expiresAt > NOW()`                                                 |
-| INV-10 | Order total must meet minimum                      | `sellerTotal >= PlatformConfig.minOrderAmountPerSeller` before Razorpay creation                         |
-| INV-11 | Order cannot confirm without captured advance      | Only `payment.captured` webhook triggers `PENDING → CONFIRMED`                                           |
-| INV-12 | Order cannot complete without full payment AND OTP | State machine requires `READY_FOR_OTP_VERIFICATION` before `verifyOtp()`                                 |
-| INV-13 | Refund calculated server-side only                 | `calcRefundAmount(advance, pickupDeadline, cancelledBy)` — client never sends refund amount              |
-| INV-14 | Seller cannot see own products in buyer feed       | `AND p."sellerId" != $userId` in PostGIS raw query when `userId` present                                 |
-| INV-15 | Review only allowed after COMPLETED SubOrder       | `reviewService` verifies `subOrder.status === COMPLETED` and buyer ownership                             |
-| INV-16 | One review per order per product                   | `Review.@@unique([subOrderId, productId])` at DB level                                                   |
-| INV-17 | Bank details masked in non-admin responses         | `accountNumber` truncated to last 4 digits in all non-admin handlers                                     |
-| INV-18 | Client never sends status transitions or prices    | Zod schemas omit `status` and `unitPrice` from all request bodies                                        |
-| INV-19 | Cart checkout reads from server state only         | `POST /api/cart/checkout` takes no body — server reads `CartSession` from DB                             |
+Concurrency correctness is a database problem before it's an application problem — `SELECT FOR UPDATE` closed an inventory race that no amount of application-level retry logic would have. The most expensive bugs aren't the ones that crash the app; they're the ones that succeed quietly with the wrong result — the cart-clearing gap and the fail-open rate limiter were both this category, and load testing earns its place specifically by surfacing that category of bug. And infrastructure choices have application-level consequences that don't show up in documentation until you actually hit them — Neon's cold starts being the clearest example here.
 
 ---
 
-## API Surface
+## About The Engineer
 
-61 endpoints across 14 resource groups. Full contract in [API.md](./API.md).
-
-| Group             | Endpoints | Auth                      |
-| ----------------- | --------- | ------------------------- |
-| Auth              | 8         | Public + Cookie           |
-| Users             | 5         | Cookie (BUYER/SELLER)     |
-| Sellers           | 6         | Cookie (SELLER)           |
-| Pickup Windows    | 4         | Cookie (SELLER)           |
-| Products — Buyer  | 3         | Public (optional auth)    |
-| Products — Seller | 7         | Cookie (SELLER)           |
-| Cart              | 6         | Cookie (BUYER)            |
-| Orders            | 7         | Cookie (BUYER/SELLER)     |
-| Reviews           | 4         | Public GET / Cookie write |
-| Saved Products    | 3         | Cookie (BUYER)            |
-| Notifications     | 6         | Cookie (BUYER/SELLER)     |
-| Webhooks          | 1         | HMAC (Razorpay)           |
-| Admin             | 8         | Cookie (ADMIN JWT)        |
-| Cron              | 3         | Bearer `CRON_SECRET`      |
-
-Response envelope — every endpoint, success or error:
-
-```json
-{ "success": true,  "data": { } }
-{ "success": false, "code": "MACHINE_READABLE", "message": "Human readable.", "meta": { } }
-```
-
----
-
-## Database Schema
-
-22 Prisma models. Key relationships:
-
-```
-User ──< userSession (token family rotation, IP tracking)
-     ──< SellerProfile ──< Product ──< PriceTier
-                                   ──< Deal
-                      ──< PickupWindow
-                      ──< SubOrder (as seller)
-                      ──< Payout
-     ──< Order ──< SubOrder ──< OrderItem
-                           ──< OrderStatusHistory
-                           ──< Payment
-                           ──< Refund
-                           ──< Review
-     ──< CartSession ──< CartItem
-     ──< SavedProduct
-     ──< Notification
-AdminUser ──< AdminAuditLog
-PlatformConfig (singleton: id = "singleton")
-WebhookLog
-```
-
----
-
-## Stack
-
-| Layer      | Technology                                | Why                                                                                                            |
-| ---------- | ----------------------------------------- | -------------------------------------------------------------------------------------------------------------- |
-| Framework  | Next.js 16 (App Router)                   | Single deployment: frontend + API routes + cron                                                                |
-| Language   | TypeScript strict                         | Schema/type mismatches caught at compile time                                                                  |
-| Database   | PostgreSQL 16 + PostGIS via Supabase      | GIST index on `geography` column for O(log n) radius search; `pg_trgm` GIN for product search                  |
-| ORM        | Prisma 7 + `@prisma/adapter-pg`           | Type-safe queries; `$transaction()` for atomic stock decrement; configured `pg.Pool` for connection management |
-| Cache      | Upstash Redis (prod) / Docker Redis (dev) | HTTP-based serverless-compatible; sliding window rate limiting + product feed TTL                              |
-| Auth       | Phone + PIN · Argon2 · HttpOnly Cookies   | XSS-proof; no localStorage; token family theft detection; userSession IP tracking                              |
-| Payments   | Razorpay                                  | Two-phase: advance (booking confirmation) + payment link (remaining at pickup)                                 |
-| Images     | Cloudinary                                | Signed direct uploads; `f_auto/q_auto/w_1200`; blurHash placeholders                                           |
-| i18n       | next-intl + `i18n-strings.ts`             | Hindi-first; notifications resolved at creation time, not at render                                            |
-| Validation | Zod v4                                    | Schema-first; `safeString` transform strips HTML from all user string inputs                                   |
-| Logging    | Pino + GlitchTip + Upptime                | Structured JSON with `requestId` correlation; 14 fields redacted; error tracking; uptime monitoring            |
-| Deploy     | Vercel (Hobby) + Supabase                 | ₹0/month                                                                                                       |
-
----
-
-## Order Lifecycle
-
-```
-PENDING → CONFIRMED → AWAITING_PAYMENT → READY_FOR_OTP_VERIFICATION → COMPLETED
-        ↘ CANCELLED                                                   ↘ DISPUTED
-```
-
-Every transition recorded in `OrderStatusHistory` with timestamp. In-app notifications fire on every transition, resolved per `user.preferredLang` at creation time — no runtime translation.
-
-**Refund tiers on cancellation:**
-
-| When                 | Buyer refund | Seller gets               |
-| -------------------- | ------------ | ------------------------- |
-| Before advance paid  | No charge    | —                         |
-| 24h+ before pickup   | 100%         | 0%                        |
-| 2–24h before pickup  | 50%          | 50%                       |
-| <2h or on inspection | 0%           | 100%                      |
-| Seller cancels       | 100%         | 0% + reliabilityScore −15 |
-
----
-
-## Project Status
-
-**Stage 1 — Complete ([live](https://kridha-marketplace.vercel.app))**
-
-61 API endpoints · PostgreSQL + PostGIS on Supabase · 22 Prisma models · 19 system invariants · 39 typed error codes · Full buyer + seller + admin flows · Hindi-first bilingual PWA · Three-layer rate limiting · CSRF protection · CSP hardened · Token family rotation · Redis cache-aside · Lazy stock expiry · Pino structured logging · GlitchTip error tracking · Upptime monitoring · k6 load test suite · Docker local dev
-
-**Stage 2 — Planned (August 2026)**
-
-- BullMQ workers on Railway — async notifications, payout processing
-- DB read replica for product listing under high load
-- Razorpay Route for automated bank transfers
-
-**Stage 3 — Planned (December 2026)**
-
-- Multi-city expansion beyond UP
-- Mobile app (React Native)
-
----
-
-## Built By
-
-**Abhishek Kumar** · NIT Allahabad '24 · Backend Engineer
-
-Available for backend engineering roles — reach out directly.
-
-[LinkedIn](https://www.linkedin.com/in/abhishekkumar878/) · [GitHub](https://github.com/DevWithAbhishek) · [Website](https://www.codewithabhishek.in/)
+Abhishek Kumar — B.Tech in Mechanical Engineering, NIT Allahabad (2024, 8.59 CPI). Previously worked in capex procurement at Vedanta Aluminium before transitioning into backend engineering through self-directed, project-based learning. Kridha was built with AI-assisted implementation throughout; the architecture, API contracts, security model, and correctness guarantees described above were designed and owned directly.

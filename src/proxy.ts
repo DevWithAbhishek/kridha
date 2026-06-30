@@ -41,6 +41,14 @@ const AUTH_PATHS = new Set([
   "/api/auth/reset-pin",
 ]);
 
+const PROTECTED_PAGES = [
+  "/cart",
+  "/checkout",
+  "/orders",
+  "/profile",
+  "/saved",
+];
+
 function unauthenticated() {
   return NextResponse.json(
     {
@@ -68,14 +76,30 @@ function rateLimited(remaining: number) {
 export async function proxy(req: NextRequest) {
   const { pathname } = req.nextUrl;
 
+  if (PROTECTED_PAGES.some(p => pathname.startsWith(p))) {
+    const token = req.cookies.get("kridha_access")?.value;
+
+    if (!token) {
+      return NextResponse.redirect(new URL("/login", req.url));
+    }
+
+    try {
+      jwt.verify(token, process.env.JWT_SECRET!, {
+        algorithms: ["HS256"],
+      });
+
+      return NextResponse.next();
+    } catch {
+      return NextResponse.redirect(new URL("/login", req.url));
+    }
+  }
+
   // 1. Cron — secret check first, no rate limiting needed
   if (pathname.startsWith("/api/cron/")) {
     const auth = req.headers.get("authorization");
     if (auth !== `Bearer ${process.env.CRON_SECRET}`) return unauthenticated();
     return NextResponse.next();
   }
-
-  const isLoadTest = process.env.LOAD_TEST_MODE === "true";
 
   const ip = req.headers.get("x-real-ip") ?? "127.0.0.1";
 
@@ -115,7 +139,7 @@ export async function proxy(req: NextRequest) {
 
   // 3. Layer 1 — Per-IP rate limiting (ALL routes except webhook and cron)
   // Runs before PUBLIC_EXACT so login/signup are also IP-rate-limited
-  if (!isLoadTest && pathname !== "/api/webhooks/razorpay") {
+  if (pathname !== "/api/webhooks/razorpay") {
     const limiter =
       pathname === "/api/auth/refresh"
         ? limiters.refreshLimiter
@@ -143,7 +167,7 @@ export async function proxy(req: NextRequest) {
   }
 
   // 4. Layer 2 — Per-account (login only, distributed stuffing prevention)
-  if (!isLoadTest && pathname === "/api/auth/login" && req.method === "POST") {
+  if (pathname === "/api/auth/login" && req.method === "POST") {
     try {
       const body = await req
         .clone()
@@ -183,7 +207,7 @@ export async function proxy(req: NextRequest) {
   }
 
   // 5. Layer 3 — Global auth (resource exhaustion / DDoS prevention)
-  if (!isLoadTest && AUTH_PATHS.has(pathname)) {
+  if (AUTH_PATHS.has(pathname)) {
     try {
       const { success } = await limiters.globalAuthLimiter.limit("global:auth");
       if (!success) {
@@ -249,4 +273,13 @@ export async function proxy(req: NextRequest) {
   }
 }
 
-export const config = { matcher: ["/api/:path*"] };
+export const config = {
+  matcher: [
+    "/api/:path*",
+    "/cart/:path*",
+    "/checkout/:path*",
+    "/orders/:path*",
+    "/profile/:path*",
+    "/saved/:path*",
+  ],
+};

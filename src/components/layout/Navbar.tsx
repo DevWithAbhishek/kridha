@@ -3,7 +3,7 @@ import { useTranslations } from "next-intl";
 import { usePathname } from "next/navigation";
 import Image from "next/image";
 import Link from "next/link";
-import { Menu } from "lucide-react";
+import { Menu, ShoppingCart } from "lucide-react";
 import { useState } from "react";
 import { LanguageToggle } from "@/components/shared/LanguageToggle";
 import { ThemeToggle } from "@/components/shared/ThemeToggle";
@@ -52,6 +52,13 @@ export function Navbar() {
           {!loading &&
             (isLoggedIn ? (
               <>
+                <Link
+                  href="/profile/cart"
+                  aria-label="Shopping Cart"
+                  className="inline-flex items-center justify-center rounded-md p-2 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors"
+                >
+                  <ShoppingCart className="h-5 w-5" />
+                </Link>
                 <Button variant="primary" size="sm">
                   <Link href="/profile/dashboard">Dashboard</Link>
                 </Button>

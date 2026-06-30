@@ -13,7 +13,6 @@ export const POST = withLogger(async (req: NextRequest) => {
   try {
     const rawBody = await req.text(); // raw text, not req.json()
     const signature = req.headers.get("x-razorpay-signature") ?? "";
-    console.log("Webhook Request: ", req)
 
     // Step 1: Verify HMAC signature
     const expectedSignature = crypto

@@ -116,7 +116,6 @@ function PayContent() {
         image: "/images/kridha_logo_nav.png",
         theme: { color: "#2A9D8F" },
         handler: (response) => {
-          console.log("Razorpay response: ", response);
           setPaymentId(response.razorpay_payment_id);
           setStatus("success");
           setTimeout(() => router.push(`/profile/orders/`), 2000);

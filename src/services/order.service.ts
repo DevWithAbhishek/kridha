@@ -137,6 +137,7 @@ export const orderService = {
             item.product.priceTiers,
           );
           const lineTotal = parseFloat((unitPrice * item.quantity).toFixed(2));
+
           sellerTotal += lineTotal;
           lines.push({
             productId: item.productId,

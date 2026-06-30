@@ -1,6 +1,13 @@
+import dotenv from "dotenv";
+dotenv.config({ path: ".env" });
+dotenv.config({ path: ".env.local", override: true });
+dotenv.config({ path: ".env.k6", override: true });
+
 import { PrismaClient } from "@prisma/client";
 import { PrismaPg } from "@prisma/adapter-pg";
 import pg from "pg";
+
+
 
 const globalForPrisma = globalThis as unknown as {
   prisma?: PrismaClient;
@@ -31,6 +38,7 @@ const pool =
     // SSL required for Supabase, not needed for local Docker
     ssl: isProd ? { rejectUnauthorized: false } : false,
   });
+
 
 if (!isProd) {
   globalForPrisma.pgPool = pool;

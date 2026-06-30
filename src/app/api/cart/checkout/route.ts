@@ -18,10 +18,10 @@ export async function POST(req: NextRequest) {
 
     // Release any expired holds on products in this cart
     // before attempting to lock stock for the new order
-    const productIds = cart.cartItems.map((ci) => ci.productId);
-    await Promise.all(
-      productIds.map((id) => releaseExpiredHoldsForProduct(id)),
-    );
+    // const productIds = cart.cartItems.map((ci) => ci.productId);
+    // await Promise.all(
+    //   productIds.map((id) => releaseExpiredHoldsForProduct(id)),
+    // );
 
     const result = await orderService.createFromCart(user.userId, cart.id);
 

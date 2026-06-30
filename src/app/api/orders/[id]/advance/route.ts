@@ -29,13 +29,13 @@ export async function GET(
 
     if (isExpired) {
       // Cancel  and Release stock
-      await releaseExpiredHoldsForProduct(
-        (
-          await prisma.orderItem.findFirst({
-            where: { subOrderId: id },
-          })
-        )?.productId ?? "",
-      ).catch(() => {});
+      // await releaseExpiredHoldsForProduct(
+      //   (
+      //     await prisma.orderItem.findFirst({
+      //       where: { subOrderId: id },
+      //     })
+      //   )?.productId ?? "",
+      // ).catch(() => {});
 
       // Return a specific code so frontend can redirect to Product Page
       return NextResponse.json(

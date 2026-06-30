@@ -46,7 +46,7 @@ export const cartService = {
   },
 
   async addItem(userId: string, input: AddItemToCartInput) {
-    await releaseExpiredHoldsForProduct(input.productId).catch(() => {});
+    // await releaseExpiredHoldsForProduct(input.productId).catch(() => {});
     const product = await prisma.product.findUnique({
       where: {
         id: input.productId,

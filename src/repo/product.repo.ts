@@ -174,7 +174,7 @@ export const productRepo = {
 
     // ── Lazy expiry: release expired holds before counting stock ─────────
     // Fire-and-forget — never block the response
-    releaseAllExpiredPendingOrders().catch(() => {});
+    // releaseAllExpiredPendingOrders().catch(() => {});
 
     // ── Cache-aside ───────────────────────────────────────────────────────
     return withCache(cacheKey, TTL.PRODUCT_LIST, async () => {

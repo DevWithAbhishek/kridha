@@ -135,7 +135,7 @@ function QtyStep({
       </div>
       <button
         type="button"
-        onClick={() => onChange(Math.round(Math.max(min, value - step)))}
+        onClick={() => onChange(Math.round(Math.max(min, value + step)))}
         disabled={value >= max}
         className="w-11 h-11 flex items-center justify-center rounded-r-xl border border-border-DEFAULT dark:border-border-dark bg-gray-50 dark:bg-gray-800 hover:bg-gray-100 dark:hover:bg-gray-700 disabled:opacity-40 transition-colors text-[var(--color-text)]"
       >

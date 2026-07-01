@@ -12,7 +12,7 @@ export function HeroSection() {
     return (
         <section className="relative bg-hero-pattern dark:bg-gradient-to-b dark:from-gray-900 dark:to-gray-800 py-16 lg:py-24">
             <div className="max-w-page mx-auto px-page-x md:px-page-x-md">
-                <div className="lg:flex lg:items-center lg:gap-12">
+                <div className="lg:flex lg:items-center lg:gap-12 lg:justify-around">
                     {/* Left side */}
                     <div className="lg:w-11/20 mb-12 lg:mb-0">
 
@@ -77,7 +77,7 @@ export function HeroSection() {
                                 </div>
                             </div>
                             <span className="text-body-sm text-[var(--color-text-muted)]">
-                                50+ suppliers in Lucknow
+                                50+ sellers in Gorakhpur
                             </span>
                         </div>
                     </div>

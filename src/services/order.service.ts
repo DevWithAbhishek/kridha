@@ -299,12 +299,22 @@ export const orderService = {
     }
 
 
-    // Store razorpayAdvanceId on each SubOrder
+    // Store on Order
+    await prisma.order.update({
+      where: { id: result.order.id },
+      data: {
+        razorpayAdvanceId: rzOrder.id,
+      },
+    });
+
+    // for backward compatibility
     await Promise.all(
       result.subOrders.map((sub) =>
         prisma.subOrder.update({
           where: { id: sub.id },
-          data: { razorpayAdvanceId: rzOrder.id },
+          data: {
+            razorpayAdvanceId: rzOrder.id,
+          },
         }),
       ),
     );

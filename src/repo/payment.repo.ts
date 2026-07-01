@@ -128,15 +128,6 @@ export const paymentRepo = {
     deliveryOtp: string,
   ) {
     await prisma.$transaction([
-      // Record idempotency log FIRST - if anything else fails, unique constraint prevents replay
-      prisma.webhookLog.create({
-        data: {
-          razorpayPaymentId,
-          eventType: "payment.captured",
-          subOrderId,
-        },
-      }),
-
       // Record Payment
       prisma.payment.create({
         data: {

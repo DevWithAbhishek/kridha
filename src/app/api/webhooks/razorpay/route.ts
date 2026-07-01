@@ -74,6 +74,13 @@ export const POST = withLogger(async (req: NextRequest) => {
       }
     }
 
+    await prisma.webhookLog.create({
+      data: {
+        razorpayPaymentId: paymentId!,
+        eventType: event,
+      },
+    });
+
     // Step 3: Route Handler
     try {
       switch (event) {

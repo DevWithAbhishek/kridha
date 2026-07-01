@@ -6,7 +6,6 @@ import { notificationService } from "./notification.service";
 import { logger } from "@/lib//logger";
 import * as Sentry from "@sentry/nextjs";
 import { paymentRepo } from "@/repo/payment.repo";
-import { string } from "zod";
 
 type RzOrder = {
   id: string;
@@ -150,12 +149,16 @@ export const paymentService = {
     const entity = payload.payload.payment.entity;
     const orderId = entity.order_id; // Razorpay order Id -> matches SubOrder.razorpayAdvanceId
 
-    const subOrder = await prisma.subOrder.findFirst({
-      where: { razorpayAdvanceId: orderId },
-      include: { order: { select: { buyerId: true } } },
+    const order = await prisma.order.findFirst({
+      where: {
+        razorpayAdvanceId: orderId,
+      },
+      include: {
+        subOrders: true,
+      },
     });
 
-    if (!subOrder) {
+    if (!order) {
       logger.warn(
         {
           event: "webhook.suborder_not_found",
@@ -167,36 +170,32 @@ export const paymentService = {
       return;
     }
 
-    if (subOrder.status !== "PENDING") {
-      logger.info(
-        {
-          event: "webhook.wrong_status",
-          subOrderId: subOrder.id,
-          status: subOrder.status,
-        },
-        "SubOrder not PENDING - skipping",
-      );
-    }
-
     // Atomic: log + update status + generate OTP in one transaction
-    const otp = Math.floor(1000 + Math.random() * 9000).toString();
-    await paymentRepo.createAdvancePayment(
-      paymentId!,
-      subOrder.id,
-      entity.amount / 100,
-      orderId,
-      otp,
-    );
+    for (const subOrder of order.subOrders) {
+      if (subOrder.status !== "PENDING") continue;
 
-    // Notifications outside transaction — fire and forget
-    notificationService.orderConfirmed(subOrder.id, otp).catch(console.error);
+      const otp = Math.floor(1000 + Math.random() * 9000).toString();
+
+      await paymentRepo.createAdvancePayment(
+        paymentId!,
+        subOrder.id,
+        subOrder.advanceAmount, // NOT entity.amount
+        orderId,
+        otp,
+      );
+
+      notificationService
+        .orderConfirmed(subOrder.id, otp)
+        .catch(console.error);
+    }
 
     logger.info(
       {
         event: "payment.captured.processed",
-        subOrderId: subOrder.id,
+        orderId: order.id,
+        processedSubOrders: order.subOrders.length,
       },
-      "SubOrder confirmed",
+      "Advance payment processed for all pending suborders",
     );
   },
 
@@ -228,23 +227,28 @@ export const paymentService = {
     const entity = payload.payload.payment.entity;
     const orderId = entity.order_id;
 
-    const subOrder = await prisma.subOrder.findFirst({
+    const order = await prisma.order.findFirst({
       where: { razorpayAdvanceId: orderId },
+      include: { subOrders: true },
     });
 
-    if (!subOrder) return;
+    if (!order) return;
 
-    await paymentRepo.createPaymentFailed(
-      subOrder.id,
-      entity.amount / 100,
-      orderId,
-      entity.id,
-    );
+    for (const subOrder of order.subOrders) {
+      if (subOrder.status !== "PENDING") continue;
+
+      await paymentRepo.createPaymentFailed(
+        subOrder.id,
+        subOrder.advanceAmount,
+        orderId,
+        entity.id,
+      );
+    }
 
     logger.warn(
       {
         event: "payment.failed",
-        subOrderId: subOrder.id,
+        orderId: order.id,
         reason: entity.error_description,
       },
       "advance payment failed",

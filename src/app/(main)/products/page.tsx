@@ -17,7 +17,7 @@ import {
 } from "lucide-react";
 import { api } from "@/lib/api";
 import { useLangStore } from "@/stores/langStore";
-import { useGeolocation, LUCKNOW_FALLBACK } from "@/hooks/useGeolocation";
+import { useGeolocation, GORAKHPUR_FALLBACK } from "@/hooks/useGeolocation";
 import { ProductCard } from "@/components/product/ProductCard";
 
 // ── Types ─────────────────────────────────────────────────────────────────
@@ -301,8 +301,8 @@ export default function ProductsPage() {
     return () => clearTimeout(t);
   }, [query]);
 
-  const eLat = lat ?? LUCKNOW_FALLBACK.lat;
-  const eLng = lng ?? LUCKNOW_FALLBACK.lng;
+  const eLat = lat ?? GORAKHPUR_FALLBACK.lat;
+  const eLng = lng ?? GORAKHPUR_FALLBACK.lng;
 
   const effectiveLat = eLat.toFixed(3);
   const effectiveLng = eLng.toFixed(3);
@@ -477,7 +477,7 @@ export default function ProductsPage() {
                 className="flex items-center gap-1.5 text-label-sm text-amber-600 dark:text-amber-400 hover:underline"
               >
                 <WifiOff className="w-3.5 h-3.5" />
-                Using Lucknow — retry
+                Using Gorakhpur — retry
               </button>
             ) : (
               <span className="flex items-center gap-1.5 text-label-sm text-green-600 dark:text-green-400">

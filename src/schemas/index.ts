@@ -28,6 +28,9 @@ const ProductUnitEnum = z.enum([
   "BUNDLE",
 ]);
 
+const GORAKHPUR_LAT = 26.713;
+const GORAKHPUR_LNG = 83.330;
+
 // daysActive — uppercase, consistent with Prisma schema and API contract
 const DayEnum = z.enum(["MON", "TUE", "WED", "THU", "FRI", "SAT", "SUN"]);
 
@@ -290,8 +293,8 @@ export const GetProductsSchema = z
   );
 
 export const GetProductsWithActiveDealSchema = z.object({
-  lat: z.coerce.number().min(8).max(37),
-  lng: z.coerce.number().min(68).max(98),
+  lat: z.coerce.number().min(8).max(37).optional().default(GORAKHPUR_LAT),
+  lng: z.coerce.number().min(68).max(98).optional().default(GORAKHPUR_LNG),
   category: ProductCategoryEnum.optional(),
   sortBy: z
     .enum(["price_asc", "price_desc", "distance"])
@@ -300,7 +303,6 @@ export const GetProductsWithActiveDealSchema = z.object({
   page: z.coerce.number().positive().optional().default(1),
   limit: z.coerce.number().positive().max(50).optional().default(20),
   radius: z.coerce.number().positive().max(50).optional().default(10),
-  // 🔥 Add ALL fields used in service
   isBranded: z.coerce.boolean().optional(),
   minPrice: z.coerce.number().optional(),
   maxPrice: z.coerce.number().optional(),

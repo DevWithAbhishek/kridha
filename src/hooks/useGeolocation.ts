@@ -10,7 +10,7 @@ interface GeoState {
   retry: () => void;
 }
 
-export const LUCKNOW_FALLBACK = { lat: 26.713254, lng: 83.330011 };
+export const GORAKHPUR_FALLBACK = { lat: 26.713254, lng: 83.330011 };
 
 export function useGeolocation(): GeoState {
   const [state, setState] = useState<GeoState>({
@@ -35,8 +35,8 @@ export function useGeolocation(): GeoState {
       },
       (error) => {
         setState({
-          lat: LUCKNOW_FALLBACK.lat,
-          lng: LUCKNOW_FALLBACK.lng,
+          lat: GORAKHPUR_FALLBACK.lat,
+          lng: GORAKHPUR_FALLBACK.lng,
           error: "Location नहीं मिली — manual select करें",
           loading: false,
           retry: getPosition,

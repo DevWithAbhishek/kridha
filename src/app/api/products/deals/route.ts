@@ -4,20 +4,19 @@ import { GetProductsWithActiveDealSchema } from "@/schemas";
 import { NextRequest, NextResponse } from "next/server";
 
 // GET /api/products/deals — public, all products with an active deal
-export async function GET(req:NextRequest) {
-    try {
-      const q = GetProductsWithActiveDealSchema.parse(
-        Object.fromEntries(req.nextUrl.searchParams),
-      );
+export async function GET(req: NextRequest) {
+  try {
+    const q = GetProductsWithActiveDealSchema.parse(
+      Object.fromEntries(req.nextUrl.searchParams),
+    );
 
-      //Reuse findNearBy with dealActive: true - no seller execution on this feed
-      const result = await productRepo.findNearby({
-        ...q,
-          dealActive: true,
-      }, undefined);
+    const result = await productRepo.findNearby(
+      { ...q, dealActive: true },
+      undefined,
+    );
 
-      return NextResponse.json({ success: true, data: result });
-    } catch (err) {
-        return handleError(err);
-    }
+    return NextResponse.json({ success: true, data: result });
+  } catch (err) {
+    return handleError(err);
+  }
 }

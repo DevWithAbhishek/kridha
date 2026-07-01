@@ -18,12 +18,12 @@ export default function HomePage() {
       <main>
         <Navbar />
         <HeroSection />
-        <DealsSection />
+        {/* <DealsSection /> */}
         <HowItWorks />
         <WhyKridha />
         <TestimonialsSection />
-        <KridhaFAQ/>
         <CtaBanner />
+        <KridhaFAQ/>
         <Footer />
       </main>
     );

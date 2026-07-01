@@ -528,7 +528,7 @@
                                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                                     <Input
                                         label={tSeller('CITY_LABEL')}
-                                        placeholder="Lucknow"
+                                        placeholder="Gorakhpur"
                                         {...register('city')}
                                         error={errors.city ? tSeller('CITY_SHORT') : undefined}
                                     />

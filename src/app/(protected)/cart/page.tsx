@@ -20,11 +20,14 @@ import {
   AlertCircle,
 } from "lucide-react";
 import * as Dialog from "@radix-ui/react-dialog";
-import { X } from "lucide-react";
 import { api } from "@/lib/api";
 import { useLangStore } from "@/stores/langStore";
 import { Button } from "@/components/ui/Button";
 import type { CartItem } from "@/types/dashboard";
+
+  function calcAdvance(total: number) {
+    return Math.min(500, Math.max(100, Math.round(total * 0.05)));
+  }
 
 interface CartData {
   id: string;
@@ -196,7 +199,12 @@ export default function CartPage() {
   // ── Totals ────────────────────────────────────────────────────────────────
   const totalAmount = cart?.items.reduce((s, i) => s + i.subTotal, 0) ?? 0;
   const totalItems = cart?.items.reduce((s, i) => s + i.quantity, 0) ?? 0;
-  const advance = Math.min(500, Math.max(100, Math.round(totalAmount * 0.05)));
+
+  const advance = groups.reduce(
+    (sum, group) =>
+      sum + calcAdvance(group.items.reduce((s, item) => s + item.subTotal, 0)),
+    0,
+  );
 
   // ── Empty state ───────────────────────────────────────────────────────────
   if (!isLoading && !cart?.items.length) {

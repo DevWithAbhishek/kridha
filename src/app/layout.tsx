@@ -1,8 +1,12 @@
   import type { Metadata, Viewport } from "next";
-  import { Inter } from "next/font/google";
+  import { Inter, Geist } from "next/font/google";
   import "./globals.css";
   // Providers wrapper (see below implementation)
   import { Providers } from "@/components/Providers";
+import { cn } from "@/lib/utils";
+
+const geist = Geist({subsets:['latin'],variable:'--font-sans'});
+
 
   // Metadata for SEO & PWA
   export const metadata: Metadata = {
@@ -35,7 +39,7 @@
     children: React.ReactNode;
   }) {
     return (
-      <html lang="en" suppressHydrationWarning>
+      <html lang="en" suppressHydrationWarning className={cn("font-sans", geist.variable)}>
         <head>
           {/* Preconnect/Google Fonts */}
           <link rel="preconnect" href="https://fonts.googleapis.com" />

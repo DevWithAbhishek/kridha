@@ -1,6 +1,7 @@
 import { getTranslations } from "next-intl/server";
 import Link from "next/link";
 import { ShieldCheck, BadgeCheck, Lock } from "lucide-react";
+import Image from "next/image";
 
 const PLATFORM_LINKS = [
   { label: "Browse Products", href: "/products" },
@@ -36,12 +37,13 @@ export async function Footer() {
           {/* Col 1 — Brand */}
           <div className="col-span-2 sm:col-span-1">
             <Link href="/" className="inline-flex items-center gap-2 mb-3">
-              <span className="flex items-center justify-center w-8 h-8 rounded-lg bg-kridha-primary text-white font-black text-base leading-none">
-                K
-              </span>
-              <span className="text-h6 font-bold text-text-dark tracking-tight">
-                Kridha
-              </span>
+              <Image
+                src="/images/kridha_logo_footer.png"
+                alt="Kridha"
+                height={32}
+                width={120}
+                className="hidden md:block"
+              />
             </Link>
             <p className="text-label-sm text-muted-dark leading-relaxed max-w-[200px]">
               Buy directly from trusted local suppliers.
@@ -107,7 +109,7 @@ export async function Footer() {
         </div>
 
         {/* Trust strip */}
-        <div className="mt-10 pt-6 border-t border-border-dark flex flex-wrap items-center gap-x-6 gap-y-2">
+        <div className="mt-5 pt-6 border-t border-border-dark flex flex-wrap items-center justify-center gap-x-6 gap-y-2">
           {TRUST_STRIP.map(({ icon: Icon, label }) => (
             <div key={label} className="flex items-center gap-1.5">
               <Icon className="w-3.5 h-3.5 text-kridha-primary flex-shrink-0" />
@@ -119,7 +121,7 @@ export async function Footer() {
 
       {/* Bottom bar */}
       <div className="border-t border-border-dark">
-        <div className="max-w-5xl mx-auto px-4 sm:px-6 py-5 flex flex-col sm:flex-row items-center justify-between gap-3">
+        <div className="max-w-5xl mx-auto px-4 sm:px-6 py-4 flex flex-col sm:flex-row items-center justify-between gap-3">
           <p className="text-label-sm text-muted-dark order-2 sm:order-1">
             © {new Date().getFullYear()} Kridha Technologies Pvt. Ltd.
           </p>

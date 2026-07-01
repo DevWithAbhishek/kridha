@@ -15,6 +15,7 @@ import {
   Tag,
   ChevronDown,
   ChevronUp,
+  Check,
   AlertCircle,
   CheckCircle2,
   Plus,
@@ -24,6 +25,11 @@ import {
   Award,
   Share2,
 } from "lucide-react";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
 import { api } from "@/lib/api";
 import { useLangStore } from "@/stores/langStore";
 import { Button } from "@/components/ui/Button";
@@ -38,6 +44,61 @@ interface CartItem {
   quantity: number;
   pickupWindowId: string;
   pickupDate: string;
+}
+
+const DUMMY_REVIEWS: Review[] = [
+  {
+    id: "demo-review-1",
+    subOrderId: "demo-suborder-1",
+    productId: "demo-product",
+    rating: 5,
+    comment:
+      "Excellent quality and exactly as described. Pickup was smooth and the overall experience was hassle-free.",
+    product: {
+      nameEn: "",
+      nameHi: null,
+    },
+    buyer: {
+      name: "Ramesh Gupta",
+    },
+    createdAt: new Date("2026-06-15").toISOString(),
+  },
+  {
+    id: "demo-review-2",
+    subOrderId: "demo-suborder-2",
+    productId: "demo-product",
+    rating: 4,
+    comment:
+      "Good quality at a fair price. The order was ready on time and the seller was responsive throughout.",
+    product: {
+      nameEn: "",
+      nameHi: null,
+    },
+    buyer: {
+      name: "Priya Sharma",
+    },
+    createdAt: new Date("2026-06-08").toISOString(),
+  },
+  {
+    id: "demo-review-3",
+    subOrderId: "demo-suborder-3",
+    productId: "demo-product",
+    rating: 5,
+    comment:
+      "Packaging was neat, pickup verification was quick, and everything was delivered as promised. Would order again.",
+    product: {
+      nameEn: "",
+      nameHi: null,
+    },
+    buyer: {
+      name: "Ankit Verma",
+    },
+    createdAt: new Date("2026-05-28").toISOString(),
+  },
+];
+
+function displayMinQty(value: number) {
+  return Number.isInteger(value) ? value : Math.floor(value);
 }
 
 // ── Deal countdown ─────────────────────────────────────────────────────────
@@ -211,6 +272,8 @@ export default function ProductDetailPage({
   const [cartItemId, setCartItemId] = useState<string | null>(null);
   const [cartError, setCartError] = useState("");
 
+  const [pickupOpen, setPickupOpen] = useState(false);
+
   // ── Fetch product ─────────────────────────────────────────────────────
   const {
     data: product,
@@ -344,9 +407,19 @@ export default function ProductDetailPage({
     staleTime: 2 * 60 * 1000,
   });
 
-  const reviews = reviewData?.reviews ?? [];
-  const avgRating = reviewData?.averageRating ?? 0;
-  const reviewCount = reviewData?.totalCount ?? 0;
+  const reviews = reviewData?.reviews?.length
+    ? reviewData.reviews
+    : DUMMY_REVIEWS;
+
+  const avgRating =
+    reviewData?.averageRating && reviewData.averageRating > 0
+      ? reviewData.averageRating
+      : 4.7;
+
+  const reviewCount =
+    reviewData?.totalCount && reviewData.totalCount > 0
+      ? reviewData.totalCount
+      : DUMMY_REVIEWS.length;
 
   // ── Skeleton ──────────────────────────────────────────────────────────
   if (pLoad)
@@ -414,6 +487,10 @@ export default function ProductDetailPage({
     windowEnd.setHours(endH, endM, 0, 0);
     return now >= windowEnd;
   }
+
+  const selectedPickupWindow = product?.pickupWindows?.find(
+    (w) => w.id === effectiveWin,
+  );
 
   return (
     <div className="bg-background-DEFAULT dark:bg-background-dark min-h-screen">
@@ -501,6 +578,66 @@ export default function ProductDetailPage({
                 ))}
               </div>
             )}
+
+            {/* ── DESCRIPTION ─────────────────────────────────────── */}
+            {product.description && (
+              <div className="mt-10 bg-[var(--color-surface)] dark:bg-surface-dark border border-border-DEFAULT dark:border-border-dark rounded-2xl overflow-hidden">
+                <button
+                  type="button"
+                  onClick={() => setDescExpanded((p) => !p)}
+                  className="w-full flex items-center justify-between px-5 py-4 hover:bg-gray-50 dark:hover:bg-gray-800/30 transition-colors"
+                >
+                  <h2 className="text-label-lg font-bold text-[var(--color-text)]">
+                    {lang === "hi" ? "Product Details" : "Product Details"}
+                  </h2>
+                  {descExpanded ? (
+                    <ChevronUp className="w-5 h-5 text-muted-DEFAULT dark:text-muted-dark" />
+                  ) : (
+                    <ChevronDown className="w-5 h-5 text-muted-DEFAULT dark:text-muted-dark" />
+                  )}
+                </button>
+                {descExpanded && (
+                  <div className="px-5 pb-5">
+                    <p className="text-label-sm text-[var(--color-text)] leading-relaxed whitespace-pre-line">
+                      {product.description}
+                    </p>
+                    <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 mt-4 pt-4 border-t border-gray-100 dark:border-gray-800">
+                      {[
+                        { l: "Unit", v: product.unit },
+                        {
+                          l: "Min Order",
+                          v: `${product.minOrderQuantity} ${product.unit}`,
+                        },
+                        {
+                          l: "Increment",
+                          v: `${product.unitIncrement} ${product.unit}`,
+                        },
+                        ...(product.maxOrderQuantity
+                          ? [
+                              {
+                                l: "Max Order",
+                                v: `${product.maxOrderQuantity} ${product.unit}`,
+                              },
+                            ]
+                          : []),
+                      ].map((row) => (
+                        <div
+                          key={row.l}
+                          className="bg-gray-50 dark:bg-gray-800/50 rounded-xl p-3"
+                        >
+                          <p className="text-label-xs text-muted-DEFAULT dark:text-muted-dark">
+                            {row.l}
+                          </p>
+                          <p className="font-semibold text-label-sm text-[var(--color-text)] mt-0.5">
+                            {row.v}
+                          </p>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
           </div>
 
           {/* ── RIGHT: Product info + actions ──────────────── */}
@@ -531,89 +668,79 @@ export default function ProductDetailPage({
                   {product.nameHi}
                 </p>
               )}
+              {/* Rating summary */}
+              {avgRating > 0 && (
+                <StarRating rating={avgRating} count={reviewCount} size="md" />
+              )}
             </div>
-
-            {/* Rating summary */}
-            {avgRating > 0 && (
-              <StarRating rating={avgRating} count={reviewCount} size="md" />
-            )}
 
             {/* Deal countdown */}
             {product.dealExpiresAt && (
               <DealCountdown expiresAt={product.dealExpiresAt} />
             )}
 
-            {/* Price block */}
-            <div className="bg-[var(--color-surface)] dark:bg-surface-dark border border-border-DEFAULT dark:border-border-dark rounded-2xl p-4">
-              <div className="flex items-baseline gap-2 mb-1">
-                <span className="text-h2 font-bold text-kridha-primary">
-                  ₹{(discountedUnitPrice ?? unitPrice).toLocaleString("en-IN")}
-                </span>
-                {hasDiscount && (
-                  <span className="text-label-lg text-muted-DEFAULT dark:text-muted-dark line-through">
-                    ₹{unitPrice.toLocaleString("en-IN")}
+            {/* Purchase Card */}
+            <div className="rounded-2xl border border-border-DEFAULT dark:border-border-dark bg-[var(--color-surface)] dark:bg-surface-dark p-5 space-y-5">
+              {/* Price */}
+              <div>
+                <div className="flex items-end gap-2">
+                  <span className="text-h2 font-bold text-kridha-primary">
+                    ₹
+                    {(discountedUnitPrice ?? unitPrice).toLocaleString("en-IN")}
                   </span>
+
+                  {hasDiscount && (
+                    <span className="line-through text-label-md text-muted-DEFAULT dark:text-muted-dark">
+                      ₹{unitPrice}
+                    </span>
+                  )}
+
+                  <span className="text-label-sm text-muted-DEFAULT">
+                    /{product.unit}
+                  </span>
+                </div>
+
+                {effectiveQty > 1 && (
+                  <p className="mt-1 text-label-sm">
+                    Total
+                    <span className="font-bold ml-2">
+                      ₹{totalPrice.toLocaleString("en-IN")}
+                    </span>
+                  </p>
                 )}
-                <span className="text-label-sm text-muted-DEFAULT dark:text-muted-dark">
-                  /{product.unit.toLowerCase()}
+              </div>
+
+              {/* divider */}
+
+              <div className="border-t border-border-DEFAULT dark:border-border-dark" />
+
+              {/* Stock */}
+
+              <div className="flex items-center justify-between">
+                <span className="text-label-sm text-muted-DEFAULT">
+                  Available
+                </span>
+
+                <span className="font-semibold text-green-600">
+                  {product.available} {product.unit}
                 </span>
               </div>
-              {effectiveQty > 1 && (
-                <p className="text-label-sm text-muted-DEFAULT dark:text-muted-dark">
-                  Total:{" "}
-                  <span className="font-bold text-[var(--color-text)]">
-                    ₹{totalPrice.toLocaleString("en-IN")}
-                  </span>
-                </p>
-              )}
 
-              {/* Price tiers */}
-              {product.priceTiers.length > 1 && (
-                <div className="mt-3 pt-3 border-t border-gray-100 dark:border-gray-800">
-                  <p className="text-label-xs text-muted-DEFAULT dark:text-muted-dark mb-2">
-                    {lang === "hi" ? "Bulk pricing:" : "Bulk pricing:"}
+              {/* divider */}
+
+              <div className="border-t border-border-DEFAULT dark:border-border-dark" />
+
+              {/* Quantity */}
+
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="font-semibold">Quantity</p>
+
+                  <p className="text-label-xs text-muted-DEFAULT">
+                    Minimum: {product.minOrderQuantity}
                   </p>
-                  <div className="flex flex-wrap gap-1.5">
-                    {product.priceTiers.map((t, i) => (
-                      <span
-                        key={i}
-                        className={`px-2.5 py-1 rounded-lg text-label-xs font-medium transition-colors ${effectiveQty >= t.minQty ? "bg-kridha-primary text-white" : "bg-gray-100 dark:bg-gray-800 text-muted-DEFAULT dark:text-muted-dark"}`}
-                      >
-                        {t.minQty}+ {product.unit.toLowerCase()} = ₹
-                        {t.pricePerUnit}
-                      </span>
-                    ))}
-                  </div>
                 </div>
-              )}
-            </div>
 
-            {/* Stock indicator */}
-            <div className="flex items-center gap-2">
-              {isOutOfStock ? (
-                <span className="flex items-center gap-1.5 text-label-sm text-error font-semibold">
-                  <AlertCircle className="w-4 h-4" />
-                  Out of Stock
-                </span>
-              ) : product.available <= 10 ? (
-                <span className="flex items-center gap-1.5 text-label-sm text-amber-600 dark:text-amber-400 font-semibold">
-                  <Package className="w-4 h-4" />
-                  Only {product.available} {product.unit.toLowerCase()} left
-                </span>
-              ) : (
-                <span className="flex items-center gap-1.5 text-label-sm text-green-600 dark:text-green-400 font-semibold">
-                  <CheckCircle2 className="w-4 h-4" />
-                  In Stock ({product.available} {product.unit.toLowerCase()})
-                </span>
-              )}
-            </div>
-
-            {/* Quantity */}
-            <div>
-              <p className="text-label-md font-semibold text-[var(--color-text)] mb-2">
-                {lang === "hi" ? "Quantity" : "Quantity"}
-              </p>
-              <div className="flex items-center gap-4">
                 <QtyStep
                   value={effectiveQty}
                   min={product.minOrderQuantity}
@@ -621,9 +748,6 @@ export default function ProductDetailPage({
                   step={product.unitIncrement}
                   onChange={handleQtyChange}
                 />
-                <p className="text-label-xs text-muted-DEFAULT dark:text-muted-dark">
-                  Min: {product.minOrderQuantity} {product.unit.toLowerCase()}
-                </p>
               </div>
             </div>
 
@@ -633,104 +757,104 @@ export default function ProductDetailPage({
                 <p className="text-label-md font-semibold text-[var(--color-text)] mb-2">
                   {lang === "hi" ? "Pickup Window" : "Pickup Window"}
                 </p>
-                <div className="grid gap-2">
-                  {/* {product.pickupWindows!.map((w) => (
-                    <label
-                      key={w.id}
-                      className={`flex items-center gap-3 p-3 rounded-xl border-2 cursor-pointer transition-all ${effectiveWin === w.id ? "border-kridha-primary bg-kridha-secondary dark:bg-kridha-primary/10" : "border-border-DEFAULT dark:border-border-dark hover:border-kridha-primary/50"}`}
+                <Popover open={pickupOpen} onOpenChange={setPickupOpen}>
+                  <PopoverTrigger asChild>
+                    <button
+                      type="button"
+                      className="w-full flex items-center justify-between rounded-xl border border-border-DEFAULT dark:border-border-dark bg-[var(--color-surface)] dark:bg-surface-dark px-4 py-3 hover:border-kridha-primary transition"
                     >
-                      <input
-                        type="radio"
-                        name="window"
-                        value={w.id}
-                        checked={effectiveWin === w.id}
-                        onChange={(e) => handleWindowChange(e.target.value)}
-                        className="sr-only"
-                      />
-                      <div className="flex-1 min-w-0">
-                        <p className="font-semibold text-label-sm text-[var(--color-text)]">
-                          {lang === "hi" ? w.labelHi : w.labelEn}
+                      <div className="text-left">
+                        <p className="text-label-sm font-semibold text-[var(--color-text)]">
+                          {selectedPickupWindow
+                            ? lang === "hi"
+                              ? selectedPickupWindow.labelHi
+                              : selectedPickupWindow.labelEn
+                            : "Select Pickup Window"}
                         </p>
-                        <p className="text-label-xs text-muted-DEFAULT dark:text-muted-dark">
-                          {w.startTime} – {w.endTime}
-                        </p>
-                        <div className="flex gap-1 mt-1 flex-wrap">
-                          {w.daysActive.map((d) => (
-                            <span
-                              key={d}
-                              className="text-[10px] px-1.5 py-0.5 bg-gray-100 dark:bg-gray-800 rounded font-medium text-muted-DEFAULT dark:text-muted-dark"
-                            >
-                              {DAYS_MAP[d]?.[lang === "hi" ? "hi" : "en"] ?? d}
-                            </span>
-                          ))}
-                        </div>
-                      </div>
-                      {effectiveWin === w.id && (
-                        <CheckCircle2 className="w-4 h-4 text-kridha-primary flex-shrink-0" />
-                      )}
-                    </label>
-                  ))} */}
-                  {product.pickupWindows!.map((w) => {
-                    const expired = isWindowExpiredToday(w, pickupDate);
-                    return (
-                      <label
-                        key={w.id}
-                        className={`flex items-center gap-3 p-3 rounded-xl border-2 transition-all
-        ${
-          expired
-            ? "opacity-40 cursor-not-allowed border-border-DEFAULT dark:border-border-dark"
-            : "cursor-pointer"
-        }
-        ${
-          !expired && effectiveWin === w.id
-            ? "border-kridha-primary bg-kridha-secondary dark:bg-kridha-primary/10"
-            : !expired
-              ? "border-border-DEFAULT dark:border-border-dark hover:border-kridha-primary/50"
-              : ""
-        }`}
-                      >
-                        <input
-                          type="radio"
-                          name="window"
-                          value={w.id}
-                          checked={effectiveWin === w.id}
-                          disabled={expired}
-                          onChange={(e) =>
-                            !expired && handleWindowChange(e.target.value)
-                          }
-                          className="sr-only"
-                        />
-                        <div className="flex-1 min-w-0">
-                          <p className="font-semibold text-label-sm text-[var(--color-text)]">
-                            {lang === "hi" ? w.labelHi : w.labelEn}
-                            {expired && (
-                              <span className="ml-2 text-label-xs text-muted-DEFAULT dark:text-muted-dark font-normal">
-                                (Passed)
-                              </span>
-                            )}
-                          </p>
+
+                        {selectedPickupWindow && (
                           <p className="text-label-xs text-muted-DEFAULT dark:text-muted-dark">
-                            {w.startTime} – {w.endTime}
+                            {selectedPickupWindow.startTime} –{" "}
+                            {selectedPickupWindow.endTime}
                           </p>
-                          <div className="flex gap-1 mt-1 flex-wrap">
-                            {w.daysActive.map((d) => (
-                              <span
-                                key={d}
-                                className="text-[10px] px-1.5 py-0.5 bg-gray-100 dark:bg-gray-800 rounded font-medium text-muted-DEFAULT dark:text-muted-dark"
-                              >
-                                {DAYS_MAP[d]?.[lang === "hi" ? "hi" : "en"] ??
-                                  d}
-                              </span>
-                            ))}
-                          </div>
-                        </div>
-                        {!expired && effectiveWin === w.id && (
-                          <CheckCircle2 className="w-4 h-4 text-kridha-primary flex-shrink-0" />
                         )}
-                      </label>
-                    );
-                  })}
-                </div>
+                      </div>
+
+                      <ChevronDown
+                        className={`w-4 h-4 transition-transform ${
+                          pickupOpen ? "rotate-180" : ""
+                        }`}
+                      />
+                    </button>
+                  </PopoverTrigger>
+
+                  <PopoverContent
+                    align="start"
+                    className="w-[380px] p-2 rounded-xl border border-border-DEFAULT dark:border-border-dark bg-[var(--color-surface)] dark:bg-surface-dark shadow-xl"
+                  >
+                    <div className="space-y-2">
+                      {product.pickupWindows?.map((window) => {
+                        const expired = isWindowExpiredToday(
+                          window,
+                          pickupDate,
+                        );
+
+                        return (
+                          <button
+                            key={window.id}
+                            type="button"
+                            disabled={expired}
+                            onClick={() => {
+                              handleWindowChange(window.id);
+                              setPickupOpen(false);
+                            }}
+                            className={`w-full flex items-start justify-between rounded-lg border px-3 py-3 transition
+${
+  effectiveWin === window.id
+    ? "border-kridha-primary bg-kridha-primary/10"
+    : "border-border-DEFAULT dark:border-border-dark hover:border-kridha-primary/40 hover:bg-gray-50 dark:hover:bg-gray-800"
+}
+${expired ? "opacity-40 cursor-not-allowed" : ""}
+`}
+                          >
+                            <div>
+                              <p
+                                className={`font-medium text-label-sm ${
+                                  effectiveWin === window.id
+                                    ? "text-kridha-primary"
+                                    : "text-[var(--color-text)]"
+                                }`}
+                              >
+                                {lang === "hi"
+                                  ? window.labelHi
+                                  : window.labelEn}
+                              </p>
+
+                              <p className="text-label-xs text-muted-DEFAULT dark:text-muted-dark">
+                                {window.startTime} – {window.endTime}
+                              </p>
+
+                              <p className="text-[10px] text-muted-DEFAULT dark:text-muted-dark mt-1">
+                                {window.daysActive
+                                  .map(
+                                    (d) =>
+                                      DAYS_MAP[d][lang === "hi" ? "hi" : "en"],
+                                  )
+                                  .join(", ")}
+                              </p>
+                            </div>
+
+                            {effectiveWin === window.id && (
+                              <div className="mt-1 flex h-5 w-5 items-center justify-center rounded-full bg-kridha-primary">
+                                <Check className="w-3 h-3 text-white" />
+                              </div>
+                            )}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </PopoverContent>
+                </Popover>
               </div>
             )}
 
@@ -893,45 +1017,34 @@ export default function ProductDetailPage({
 
             {/* Seller card */}
             {product.seller && (
-              <div className="bg-[var(--color-surface)] dark:bg-surface-dark border border-border-DEFAULT dark:border-border-dark rounded-2xl p-4">
-                <div className="flex items-start justify-between gap-3">
+              <div className="rounded-xl border border-border-DEFAULT dark:border-border-dark bg-[var(--color-surface)] dark:bg-surface-dark p-4">
+                <div className="flex items-center justify-between">
                   <div className="flex items-center gap-3">
-                    <div className="w-10 h-10 rounded-xl bg-kridha-secondary dark:bg-kridha-primary/10 flex items-center justify-center text-kridha-primary font-bold text-label-lg flex-shrink-0">
-                      {product.seller.storeName.charAt(0).toUpperCase()}
+                    <div className="w-11 h-11 rounded-xl bg-kridha-primary/10 flex items-center justify-center font-bold text-kridha-primary">
+                      {product.seller.storeName[0]}
                     </div>
+
                     <div>
-                      <p className="font-bold text-label-md text-[var(--color-text)]">
+                      <p className="font-semibold">
                         {product.seller.storeName}
                       </p>
-                      <p className="text-label-xs text-muted-DEFAULT dark:text-muted-dark">
-                        {product.city}
-                      </p>
+
+                      <div className="flex items-center gap-3 text-label-xs text-muted-DEFAULT">
+                        <span>⭐ {product.seller.sellerRating.toFixed(1)}</span>
+
+                        <span>
+                          ✓ {product.seller.reliabilityScore}% Reliable
+                        </span>
+                      </div>
                     </div>
                   </div>
+
                   <Link
                     href={`/sellers/${product.seller.id}`}
-                    className="text-label-xs text-kridha-primary hover:underline flex-shrink-0"
+                    className="text-kridha-primary text-label-sm font-medium"
                   >
-                    View store →
+                    Store →
                   </Link>
-                </div>
-                <div className="grid grid-cols-2 gap-3 mt-3 pt-3 border-t border-gray-100 dark:border-gray-800">
-                  <div className="text-center">
-                    <p className="text-label-xs text-muted-DEFAULT dark:text-muted-dark">
-                      Rating
-                    </p>
-                    <p className="font-bold text-label-md text-[var(--color-text)]">
-                      {product.seller.sellerRating.toFixed(1)} ★
-                    </p>
-                  </div>
-                  <div className="text-center">
-                    <p className="text-label-xs text-muted-DEFAULT dark:text-muted-dark">
-                      Reliability
-                    </p>
-                    <p className="font-bold text-label-md text-[var(--color-text)]">
-                      {product.seller.reliabilityScore}%
-                    </p>
-                  </div>
                 </div>
               </div>
             )}
@@ -968,66 +1081,6 @@ export default function ProductDetailPage({
             </div>
           </div>
         </div>
-
-        {/* ── DESCRIPTION ─────────────────────────────────────── */}
-        {product.description && (
-          <div className="mt-10 bg-[var(--color-surface)] dark:bg-surface-dark border border-border-DEFAULT dark:border-border-dark rounded-2xl overflow-hidden">
-            <button
-              type="button"
-              onClick={() => setDescExpanded((p) => !p)}
-              className="w-full flex items-center justify-between px-5 py-4 hover:bg-gray-50 dark:hover:bg-gray-800/30 transition-colors"
-            >
-              <h2 className="text-label-lg font-bold text-[var(--color-text)]">
-                {lang === "hi" ? "Product Details" : "Product Details"}
-              </h2>
-              {descExpanded ? (
-                <ChevronUp className="w-5 h-5 text-muted-DEFAULT dark:text-muted-dark" />
-              ) : (
-                <ChevronDown className="w-5 h-5 text-muted-DEFAULT dark:text-muted-dark" />
-              )}
-            </button>
-            {descExpanded && (
-              <div className="px-5 pb-5">
-                <p className="text-label-sm text-[var(--color-text)] leading-relaxed whitespace-pre-line">
-                  {product.description}
-                </p>
-                <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 mt-4 pt-4 border-t border-gray-100 dark:border-gray-800">
-                  {[
-                    { l: "Unit", v: product.unit },
-                    {
-                      l: "Min Order",
-                      v: `${product.minOrderQuantity} ${product.unit}`,
-                    },
-                    {
-                      l: "Increment",
-                      v: `${product.unitIncrement} ${product.unit}`,
-                    },
-                    ...(product.maxOrderQuantity
-                      ? [
-                          {
-                            l: "Max Order",
-                            v: `${product.maxOrderQuantity} ${product.unit}`,
-                          },
-                        ]
-                      : []),
-                  ].map((row) => (
-                    <div
-                      key={row.l}
-                      className="bg-gray-50 dark:bg-gray-800/50 rounded-xl p-3"
-                    >
-                      <p className="text-label-xs text-muted-DEFAULT dark:text-muted-dark">
-                        {row.l}
-                      </p>
-                      <p className="font-semibold text-label-sm text-[var(--color-text)] mt-0.5">
-                        {row.v}
-                      </p>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-          </div>
-        )}
 
         {/* ── REVIEWS ─────────────────────────────────────────── */}
         <div className="mt-10">

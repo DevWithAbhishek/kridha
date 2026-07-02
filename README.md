@@ -1,8 +1,24 @@
 # Kridha
 
+<p align="center">
+
+![Next.js](https://img.shields.io/badge/Next.js-16-black?logo=next.js)
+![TypeScript](https://img.shields.io/badge/TypeScript-5.9-3178C6?logo=typescript&logoColor=white)
+![PostgreSQL](https://img.shields.io/badge/PostgreSQL-17-4169E1?logo=postgresql&logoColor=white)
+![PostGIS](https://img.shields.io/badge/PostGIS-Spatial_DB-4169E1)
+![Prisma](https://img.shields.io/badge/Prisma-ORM-2D3748?logo=prisma)
+![Redis](https://img.shields.io/badge/Redis-Cache-DC382D?logo=redis)
+![Docker](https://img.shields.io/badge/Docker-Containerized-2496ED?logo=docker)
+![Razorpay](https://img.shields.io/badge/Razorpay-Payments-0C2451)
+![CI](https://github.com/DevWithAbhishek/kridha/actions/workflows/ci.yml/badge.svg)
+![License](https://img.shields.io/github/license/DevWithAbhishek/kridha)
+![Status](https://img.shields.io/badge/Status-Active-success)
+
+</p>
+
 A hyperlocal B2B + B2C self-pickup marketplace — multi-vendor checkout, geospatial seller discovery, and payment reconciliation.
 
-**[Live Demo](#) · [Architecture Doc](./DESIGN.md) · [API Reference](./API.md)**
+**[Live Demo](https://youtu.be/RqErC6yHFok) · [Architecture](./docs/DESIGN.md) · [API Reference](./docs/API.md)**
 
 Available for backend & full-stack engineering roles.
 
@@ -78,7 +94,7 @@ Authenticated requests flow from the Next.js App Router through the service laye
 ### ADR-05 — Order → SubOrder decomposition over a flat order with seller-tagged line items
 **Context:** A single cart can span multiple sellers, each with independent pickup timing, fulfillment status, and settlement. **Decision:** An `Order` represents the buyer's checkout transaction; each seller's portion becomes a `SubOrder` with its own state machine. **Rejected alternative:** One flat order with seller-tagged line items — "ready for pickup" and "cancelled" are seller-scoped states, and flattening them produces an order that's simultaneously correct and incorrect depending on which seller you ask about.
 
-→ Full ADRs with consequences and tradeoffs accepted: [DESIGN.md](./DESIGN.md)
+→ Full ADRs with consequences and tradeoffs accepted: [DESIGN.md](./docs/DESIGN.md)
 
 ---
 
@@ -108,13 +124,13 @@ Load testing with k6 against checkout and catalog read paths, run against a prod
 
 ---
 
-## Documentation Index
+## Engineering Documentation
 
 | Document | Audience | Contents |
 |---|---|---|
-| [DESIGN.md](./DESIGN.md) | CTO, Senior Engineer | Architecture, system invariants, full ADRs |
-| [API.md](./API.md) | Engineers | API reference — 61 endpoints |
-| [CASE_STUDY.md](./CASE_STUDY.md) | Founder, EM | Engineering narrative & background |
+| [DESIGN.md](./docs/DESIGN.md) | CTO, Senior Engineer | Architecture, system invariants, full ADRs |
+| [API.md](./docs/API.md) | Engineers | API reference — 61 endpoints |
+| [CASE_STUDY.md](./docs/CASE_STUDY.md) | Founder, EM | Engineering narrative & background |
 
 ---
 
@@ -175,7 +191,7 @@ npx prisma migrate reset
 
 ## System Invariants
 
-Full set of 19 documented in [DESIGN.md](./DESIGN.md):
+Full set of 19 documented in [DESIGN.md](./docs/DESIGN.md):
 
 | # | Invariant |
 |---|---|
@@ -190,13 +206,13 @@ Full set of 19 documented in [DESIGN.md](./DESIGN.md):
 
 ## API Surface
 
-61 REST endpoints across Authentication, Products, Cart, Orders, Payments, Admin and Health. Full request/response contract in [API.md](./API.md).
+61 REST endpoints across Authentication, Products, Cart, Orders, Payments, Admin and Health. Full request/response contract in [API.md](./docs/API.md).
 
 ---
 
 ## Database Schema
 
-22 Prisma models. Full schema in [DESIGN.md](./DESIGN.md).
+22 Prisma models. Full schema in [DESIGN.md](./docs/DESIGN.md).
 
 ---
 
@@ -225,6 +241,6 @@ Full set of 19 documented in [DESIGN.md](./DESIGN.md):
 
 **Abhishek Kumar** · NIT Allahabad '24 · Backend Engineer
 
-Available for backend & full-stack engineering roles.
+Open to Backend Engineer and Backend-heavy Full Stack Engineer opportunities.
 
 [LinkedIn](https://www.linkedin.com/in/abhishekkumar878/) · [Portfolio](https://www.codewithabhishek.in/) · [GitHub](https://github.com/DevWithAbhishek) · [abhishek@codewithabhishek.in](mailto:abhishek@codewithabhishek.in)

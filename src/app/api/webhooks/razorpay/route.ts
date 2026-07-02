@@ -46,7 +46,7 @@ export const POST = withLogger(async (req: NextRequest) => {
       "webhook received",
     );
 
-    // Step 2: Idempotency Check (Extract paymentId from whichever event type)
+    // Step 2: Idempotency Check - @unique constraint (Extract paymentId from whichever event type)
     const paymentId =
       payload.payload?.payment?.entity?.id ??
       payload.payload?.payment_link?.entity?.payments?.[0]?.payment?.entity

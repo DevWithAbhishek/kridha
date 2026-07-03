@@ -10,8 +10,6 @@
 ![Redis](https://img.shields.io/badge/Redis-Cache-DC382D?logo=redis)
 ![Docker](https://img.shields.io/badge/Docker-Containerized-2496ED?logo=docker)
 ![Razorpay](https://img.shields.io/badge/Razorpay-Payments-0C2451)
-![CI](https://github.com/DevWithAbhishek/kridha/actions/workflows/ci.yml/badge.svg)
-![License](https://img.shields.io/github/license/DevWithAbhishek/kridha)
 ![Status](https://img.shields.io/badge/Status-Active-success)
 
 </p>

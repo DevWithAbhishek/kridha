@@ -1,13 +1,274 @@
 # DESIGN.md — Kridha Architecture & Implementation Decisions
 
+This document is the complete implementation guide for Kridha's backend. README.md summarises; this document justifies. Every engineering claim in README.md has its implementation explained here. Audience: CTO, Staff Engineer, Senior Backend Engineer, Engineering Manager, System Design Interviewer.
+
 ---
 
-## 1. Patterns Used
+## Table of Contents
 
-### 1.1 State Machine (Order Lifecycle)
+1. [Architectural Layers](#1-architectural-layers)
+2. [Middleware — Security Boundary](#2-middleware--security-boundary)
+3. [Service Layer — Business Logic Ownership](#3-service-layer--business-logic-ownership)
+4. [Repository Pattern — Data Access Isolation](#4-repository-pattern--data-access-isolation)
+5. [State Machine — Order Lifecycle](#5-state-machine--order-lifecycle)
+6. [Order → SubOrder Decomposition](#6-order--suborder-decomposition)
+7. [Concurrency Control — Pessimistic Locking](#7-concurrency-control--pessimistic-locking)
+8. [Transactions — ACID Guarantees](#8-transactions--acid-guarantees)
+9. [Cookie-Only Auth Architecture](#9-cookie-only-auth-architecture)
+10. [Token Family Rotation](#10-token-family-rotation)
+11. [Refresh Token Flow — Silent Refresh](#11-refresh-token-flow--silent-refresh)
+12. [Idempotency — Webhook Processing](#12-idempotency--webhook-processing)
+13. [Cache-Aside — Product Feed](#13-cache-aside--product-feed)
+14. [Rate Limiting — Three Layers](#14-rate-limiting--three-layers)
+15. [Spatial Discovery — PostGIS](#15-spatial-discovery--postgis)
+16. [Error Handling — Typed Errors](#16-error-handling--typed-errors)
+17. [Logging — Structured + Redacted](#17-logging--structured--redacted)
+18. [Database Design — Indexes, Constraints, Schema](#18-database-design--indexes-constraints-schema)
+19. [Infrastructure Resilience — Supabase Pooler Retry](#19-infrastructure-resilience--supabase-pooler-retry)
+20. [Security — Complete Threat Model](#20-security--complete-threat-model)
+21. [Performance — Query Optimisation & Connection Pooling](#21-performance--query-optimisation--connection-pooling)
+22. [Testing — Strategy & Validation](#22-testing--strategy--validation)
+23. [Key Technical Decisions](#23-key-technical-decisions)
+24. [Scale Upgrade Path](#24-scale-upgrade-path)
+25. [System Invariants](#25-system-invariants)
+26. [Known Limitations](#26-known-limitations)
 
-`SubOrder.status` transitions are modelled as an explicit finite-state machine
-defined in `src/lib/state-machine.ts`.
+---
+
+## 1. Architectural Layers
+
+### Request Lifecycle
+
+Every request in Kridha passes through a strict, non-negotiable layer sequence. No layer can be skipped. No handler accesses a lower layer that isn't its direct dependency.
+
+```
+Browser / Mobile
+      │
+      ▼ HTTPS
+┌─────────────────────────────────────────────────┐
+│  Next.js App Router (Vercel Serverless)          │
+│                                                   │
+│  ┌─────────────────────────────────────────────┐ │
+│  │  Middleware (proxy.ts)                       │ │
+│  │  Rate limit → CSRF → JWT verify → Role check │ │
+│  └────────────────────┬────────────────────────┘ │
+│                        ▼                          │
+│  ┌─────────────────────────────────────────────┐ │
+│  │  Route Handler (thin)                        │ │
+│  │  Parse request → call service → return JSON  │ │
+│  └────────────────────┬────────────────────────┘ │
+│                        ▼                          │
+│  ┌─────────────────────────────────────────────┐ │
+│  │  Service Layer                               │ │
+│  │  Business rules, validation, orchestration   │ │
+│  └────────────────────┬────────────────────────┘ │
+│                        ▼                          │
+│  ┌─────────────────────────────────────────────┐ │
+│  │  Repository Layer                            │ │
+│  │  Prisma queries — single domain per file     │ │
+│  └────────────┬───────────────────┬────────────┘ │
+└───────────────┼───────────────────┼──────────────┘
+                ▼                   ▼
+        PostgreSQL + PostGIS      Redis
+```
+
+**Webhook entry point (separate from user request path):**
+
+```
+Razorpay
+    │
+    ▼ POST /api/webhooks/razorpay
+HMAC verify (timingSafeEqual)
+    │
+    ▼
+Idempotency check (WebhookLog @unique)
+    │
+    ▼
+$transaction [ webhookLog.create + subOrder.update + statusHistory.create ]
+    │
+    ▼
+200 (always — even on invalid signature)
+```
+
+Webhooks never pass through the user auth middleware. They have their own verification path — HMAC signature rather than JWT. This prevents any accidental coupling between user session state and payment event processing.
+
+### Dependency Direction
+
+```
+Route Handler
+    → imports Service
+          → imports Repository
+                → imports Prisma
+                      → Supabase Postgres
+
+Route Handler never imports Repository.
+Repository never imports Service.
+Service never imports another Service's Repository.
+```
+
+This is enforced by convention. A lint rule can enforce it mechanically.
+
+---
+
+## 2. Middleware — Security Boundary
+
+**Problem:** Security concerns (auth, rate limiting, CSRF, role enforcement) are cross-cutting. Without centralization they get copy-pasted into each route handler, diverge over time, and the first missed check is a vulnerability.
+
+**Solution:** `src/middleware/proxy.ts` — all requests pass through before any route handler executes.
+
+### Execution Order
+
+```
+Incoming request
+      │
+      ▼
+1. Rate limit — Layer 1: per-IP (5/min auth, 60/min general)
+      │
+      ▼
+2. Rate limit — Layer 2: per-account suffix (10/15min, defeats IP rotation)
+      │
+      ▼
+3. Rate limit — Layer 3: global platform ceiling (500 auth req/min)
+      │
+      ▼
+4. CSRF double-submit check (mutation routes only)
+      │
+      ▼
+5. JWT extraction from HttpOnly cookie
+      │
+      ▼
+6. JWT verification (HS256, algorithm whitelist)
+      │
+      ▼
+7. Role enforcement (BUYER / SELLER / ADMIN boundary)
+      │
+      ▼
+Route Handler
+```
+
+Order is non-negotiable. Rate limiting runs before JWT verification — a rate-limited request should not burn a JWT decode operation. CSRF runs before payload parsing — no business logic should execute on a forged request.
+
+### Why Centralized Middleware
+
+A route handler that includes its own auth check is a route handler that could accidentally ship without it. Centralized middleware makes the secure path the only path. The pattern mirrors what Express middleware achieves — but implemented in Next.js App Router's `middleware.ts` file which runs at the edge before any route handler.
+
+### Public Routes
+
+Routes explicitly excluded from JWT enforcement:
+- `GET /api/products*` — product discovery is public
+- `GET /api/reviews*` — reviews are public
+- `POST /api/auth/login`, `POST /api/auth/register` — auth entry points
+- `POST /api/webhooks/razorpay` — has its own HMAC verification
+
+All other routes require a valid JWT.
+
+---
+
+## 3. Service Layer — Business Logic Ownership
+
+**Problem:** If business logic lives in route handlers, it cannot be reused (e.g. by a cron job and a user request), cannot be tested without HTTP overhead, and diverges when multiple handlers touch the same domain.
+
+**Solution:** Services own all business rules. Route handlers parse, delegate, and respond.
+
+### Responsibilities
+
+```
+Route Handler           Service Layer              Repository
+─────────────          ───────────────            ────────────
+Parse request     →    Validate inputs     →      DB query
+Validate types         Business rules             Return typed model
+Call service      ←    Call repos
+Return response        Compose result
+                       Handle transactions
+                       Throw typed errors
+```
+
+### What Lives in a Service
+
+- Minimum order value enforcement (`PlatformConfig.minOrderValue`)
+- Stock sufficiency check (advisory, before lock)
+- Advance calculation (`calcAdvance(total, config)`)
+- State machine validation (`validateTransition(from, to)`)
+- Refund tier calculation (`calcRefundAmount(advance, deadline, cancelledBy)`)
+- Notification creation (i18n resolved at creation time)
+- Deal expiry check at read time
+
+### What Does Not Live in a Service
+
+- Prisma queries (repository layer only)
+- HTTP request/response parsing (route handler only)
+- Cookie manipulation (route handler only)
+- Direct Redis access for caching (repository layer, via `withCache`)
+- JWT verification (middleware only)
+
+### Testing Implication
+
+A service can be unit-tested by mocking its repository dependencies without starting an HTTP server. This is the primary reason for the separation.
+
+---
+
+## 4. Repository Pattern — Data Access Isolation
+
+**Problem:** If `prisma` is imported anywhere, changing the ORM requires touching every file that uses it. Mocking DB calls in tests requires mocking `prisma` globally.
+
+**Solution:** One repository file per domain. Services import repositories, never `prisma` directly.
+
+### File Structure
+
+```
+src/repo/
+  auth.repo.ts      — User, UserSession, RefreshToken
+  product.repo.ts   — Product, PriceTier, Deal
+  order.repo.ts     — Order, SubOrder, OrderItem, OrderStatusHistory
+  seller.repo.ts    — SellerProfile, PickupWindow
+  user.repo.ts      — User (buyer-facing reads)
+  admin.repo.ts     — AdminUser, AdminAuditLog
+```
+
+### Layer Contract
+
+```typescript
+// product.repo.ts
+export async function findNearby(filters: GeoFilters, excludeSellerId?: string) {
+  return withRetry(() =>
+    prisma.$queryRaw<ProductWithRelations[]>(buildNearbyQuery(filters, excludeSellerId))
+  );
+}
+
+// product.service.ts
+import * as productRepo from "@/repo/product.repo";
+
+export async function getNearbyProducts(input: ...) {
+  await releaseExpiredHolds(); // lazy expiry side-effect
+  return productRepo.findNearby(input.filters, input.userId);
+}
+```
+
+### Why Not Prisma Everywhere
+
+Three reasons:
+
+1. **Testability.** `vi.mock("@/repo/product.repo")` is clean and localised. `vi.mock("@/lib/prisma")` pollutes the entire test environment.
+2. **Geography queries.** `prisma.$queryRaw` for PostGIS predicates is a sharp edge that shouldn't scatter across the codebase. One repository function wraps it cleanly.
+3. **Retry logic.** `withRetry` for Supabase pooler errors belongs at the DB access layer, not in every service.
+
+### Mocking in Tests
+
+```typescript
+// order.service.test.ts
+import * as orderRepo from "@/repo/order.repo";
+vi.spyOn(orderRepo, "createOrder").mockResolvedValue(mockOrder);
+```
+
+No Prisma client starts. No DB connection needed. Tests run in milliseconds.
+
+---
+
+## 5. State Machine — Order Lifecycle
+
+**Problem:** Order status logic scattered across route handlers produces duplicate guards, inconsistent enforcement, and states that can be reached via unintended paths.
+
+**Solution:** `src/lib/state-machine.ts` — the single source of truth for valid transitions. No handler writes `status` directly.
 
 ```typescript
 const TRANSITIONS: Record<OrderStatus, OrderStatus[]> = {
@@ -15,342 +276,1278 @@ const TRANSITIONS: Record<OrderStatus, OrderStatus[]> = {
   CONFIRMED:                  ["AWAITING_PAYMENT", "CANCELLED"],
   AWAITING_PAYMENT:           ["READY_FOR_OTP_VERIFICATION"],
   READY_FOR_OTP_VERIFICATION: ["COMPLETED", "DISPUTED"],
-  COMPLETED:                  [],   // terminal — empty edge set
-  CANCELLED:                  [],   // terminal — empty edge set
-  DISPUTED:                   [],   // terminal — empty edge set
+  COMPLETED:                  [],
+  CANCELLED:                  [],
+  DISPUTED:                   [],
 };
+
+export function validateTransition(from: OrderStatus, to: OrderStatus): void {
+  const allowed = TRANSITIONS[from] ?? [];
+  if (!allowed.includes(to)) {
+    throw new AppError("INVALID_TRANSITION", 409, { from, to, allowed });
+  }
+}
 ```
 
-`validateTransition(from, to)` throws `INVALID_TRANSITION` (HTTP 409) before
-any DB write. No `if` chains in service code — correctness is data, not logic.
-
-**Terminal State Protection (Interview: Immutability Guarantee)**
-
-`COMPLETED`, `CANCELLED`, and `DISPUTED` have empty edge arrays. This is not
-enforced by a DB constraint — it is enforced by the fact that
-`TRANSITIONS[status].length === 0` causes `validateTransition` to throw
-unconditionally for any `to` value. Two architectural reasons:
-
-1. **Financial finality.** A `COMPLETED` SubOrder has a settled payout row and
-   a Razorpay payment record. Allowing re-transition would create a split-brain
-   between the financial ledger and the order record — the payout cannot be
-   un-sent, so the order must not be un-completed.
-
-2. **Audit integrity.** `OrderStatusHistory` is append-only. A re-opened
-   `CANCELLED` order would produce a history that contradicts the refund
-   already issued. Both the refund and the cancellation notification are
-   side-effects that cannot be undone — the status must match.
-
-The state machine is the single choke-point. No endpoint, webhook, or cron
-job writes `status` directly — all go through `validateTransition` first (INV-02).
-
----
-
-### 1.2 Repository Pattern (Data Access)
-
-All Prisma access is isolated per domain:
+### State Diagram
 
 ```
-src/repo/
-  auth.repo.ts      product.repo.ts
-  order.repo.ts     seller.repo.ts
-  user.repo.ts      admin.repo.ts
+                    ┌─────────┐
+              ┌────►│ PENDING │────────────────────────────────┐
+              │     └────┬────┘                                 │
+              │          │ payment.captured webhook             │
+              │          ▼                                      │
+              │    ┌──────────┐                                 │
+              │    │CONFIRMED │──────────────────────────────┐  │
+              │    └────┬─────┘                              │  │
+              │         │ seller requests payment link       │  │
+              │         ▼                                    │  │
+              │  ┌─────────────────┐                        │  │
+              │  │AWAITING_PAYMENT │                        │  │
+              │  └────────┬────────┘                        │  │
+              │           │ payment_link.paid webhook        │  │
+              │           ▼                                  ▼  ▼
+              │  ┌──────────────────────────┐      ┌──────────────┐
+              │  │READY_FOR_OTP_VERIFICATION│      │  CANCELLED   │◄─┐
+              │  └──────────┬───────────────┘      └──────────────┘  │
+              │             │ OTP verified                            │
+              │    ┌────────┴────────┐             either party can  │
+              │    │                 │             cancel from PENDING│
+              │    ▼                 ▼             or CONFIRMED       │
+              │ ┌───────────┐  ┌──────────┐                         │
+              │ │ COMPLETED │  │ DISPUTED │                         │
+              │ └───────────┘  └──────────┘                         │
+              │  (terminal)     (terminal)                           │
+              └─────────────────────────────────────────────────────┘
 ```
 
-Services import repos, never `prisma` directly. Swapping the ORM is one file
-per domain. Route handlers import services, never repos. The dependency graph
-is strictly layered: `route → service → repo → prisma`.
+### Terminal State Protection
 
----
+`COMPLETED`, `CANCELLED`, `DISPUTED` have empty edge arrays. `validateTransition` throws before any DB write. This is not enforced by a DB constraint — it is enforced by the fact that empty arrays produce an unconditional throw for any `to` value.
 
-### 1.3 Idempotency (Webhook Processing)
+**Financial finality:** A `COMPLETED` SubOrder has a payout row and a Razorpay payment record. Re-transitioning creates split-brain between financial ledger and order record.
 
-```
-Razorpay fires payment.captured
-  │
-  ├─ 1. Verify HMAC (RAZORPAY_WEBHOOK_SECRET)
-  │      fail → log, return 200 silently
-  ├─ 2. SELECT WebhookLog WHERE razorpayPaymentId = $id
-  │      found → return 200 immediately (duplicate)
-  └─ 3. prisma.$transaction([
-           subOrder.update(PENDING → CONFIRMED),
-           webhookLog.create({ razorpayPaymentId }),  ← @unique constraint
-           orderStatusHistory.create(),
-        ])
-        Race: second concurrent INSERT violates @unique → rollback → 200
-```
+**Audit integrity:** `OrderStatusHistory` is append-only. A re-opened `CANCELLED` order produces a history contradicting the refund already issued.
 
-`WebhookLog.razorpayPaymentId @unique` is the idempotency key at the DB layer.
-Application-level duplicate checks are insufficient under concurrent delivery —
-the `@unique` constraint is the final atomic guard. The handler always returns
-`200` to prevent Razorpay's exponential retry backoff (INV-03).
-
----
-
-### 1.4 Cache-Aside (Product Feed)
-
-`productRepo.findNearby` checks Redis before hitting the DB:
-
-```
-Cache key:  products:{lat}:{lng}:{radius}:{category}:{sortBy}:{page}
-TTL:        60s (matches TanStack Query staleTime on client)
-Invalidate: on product create / PATCH / DELETE (cacheDel in service layer)
-```
-
-All cache operations are fail-open — `cacheGet` and `cacheSet` swallow errors.
-Redis is never source of truth; the DB is. A Redis outage degrades performance,
-not correctness.
-
-**Distinction from rate-limit state:** Redis serves two different
-responsibilities in Kridha — cache (fail-open, degrades performance only) and
-rate-limit counters (fail-**closed**, see §5a). The two are not interchangeable
-failure modes; conflating them was a load-testing finding, not a design intent
-— see Performance Validation in `README.md`.
-
----
-
-## 2. Concurrency Control — Pessimistic Locking for Stock
-
-**The race condition:** Two buyers simultaneously add the last 10 kg of Mustard
-Oil to their carts. Both read `available = 10`. Both call
-`POST /api/cart/checkout`. Without a lock, both writes succeed — `available`
-goes to `−10`, violating INV-01.
-
-### Why Pessimistic Locking (`SELECT FOR UPDATE`)
-
-Kridha uses **pessimistic locking** inside `prisma.$transaction()`:
-
-```sql
-BEGIN;
-SELECT * FROM "Product" WHERE id = $1 FOR UPDATE;
--- row is now locked — concurrent readers that also use FOR UPDATE block here
-UPDATE "Product" SET available = available - $qty WHERE id = $1;
-INSERT INTO "OrderItem" ...;
-COMMIT;
-```
-
-The `FOR UPDATE` lock is held from `SELECT` to `COMMIT`. Any concurrent
-transaction attempting `SELECT ... FOR UPDATE` on the same product row blocks
-until the first transaction commits or rolls back. Outcome: exactly one buyer
-gets `201 CREATED`, the other gets `409 INSUFFICIENT_STOCK`.
-
-**Why pessimistic over optimistic (version counter)?**
-
-Optimistic locking adds a `version: Int` column. On update:
-```sql
-UPDATE "Product" SET available = available - $qty, version = version + 1
-WHERE id = $1 AND version = $expectedVersion;
-```
-If another transaction incremented `version` first, this update affects 0 rows
-→ application retries the whole transaction.
-
-For Kridha's hot SKUs (mustard oil from one mill, 50 units total, 20 buyers
-simultaneously), optimistic locking produces a **retry storm** — most
-transactions fail their `version` check, retry, fail again, and exhaust their
-retry budget. The latency tail explodes.
-
-Pessimistic locking serialises access at the DB layer. One transaction holds
-the lock, the rest queue. Total time = sum of serialised writes (fast) rather
-than sum of failed attempts × retry count (unpredictable). For low-contention
-rows (most products), the lock is held for <5ms — negligible overhead.
-
-**Deterministic success for hot SKUs** — the first N transactions where N ≤
-`available` always succeed. No retry needed. The (N+1)th transaction gets a
-clean `409` immediately. This is the correct behaviour for a marketplace: first
-come, first served, no ambiguity.
+### Anti-Pattern Avoided
 
 ```typescript
-// src/services/order.service.ts (simplified)
+// ❌ Wrong — status logic in handler
+if (subOrder.status !== "CONFIRMED") {
+  throw new Error("Cannot request payment");
+}
+await prisma.subOrder.update({ data: { status: "AWAITING_PAYMENT" } });
+
+// ✅ Correct — centralized validation
+validateTransition(subOrder.status, "AWAITING_PAYMENT"); // throws if invalid
+await orderRepo.updateSubOrderStatus(id, "AWAITING_PAYMENT");
+```
+
+---
+
+## 6. Order → SubOrder Decomposition
+
+**Problem:** A multi-seller checkout needs two things that conflict in a flat model: one atomic payment (buyer pays once), and independent per-seller fulfillment (Seller A cancelling must not block Seller B).
+
+### Data Model
+
+```
+Order
+  id
+  buyerId
+  totalAmount
+  advanceAmount
+  platformFee
+  razorpayOrderId       ← payment reference
+  cartSessionId
+  createdAt
+  (no status — derived from SubOrders)
+
+SubOrder
+  id
+  orderId               ← FK to Order
+  sellerId
+  status                ← own state machine
+  totalAmount
+  advanceAmount
+  remainingAmount
+  platformFee
+  pickupWindowId
+  pickupDate
+  pickupDeadline        ← stored, not computed (indexable)
+  deliveryOtp
+  paymentLinkId
+  paymentLinkUrl
+  razorpayPaymentId
+  createdAt
+
+OrderItem
+  id
+  subOrderId            ← FK to SubOrder (not Order)
+  productId
+  quantity
+  unitPrice             ← locked at add-to-cart time
+  totalPrice
+
+OrderStatusHistory
+  id
+  subOrderId
+  status
+  createdAt
+  note
+
+Payment
+  id
+  subOrderId
+  type                  ← ADVANCE | REMAINING
+  status                ← PENDING | PAID | REFUNDED
+  amount
+  razorpayPaymentId     ← @unique
+
+Refund
+  id
+  subOrderId
+  amount
+  status
+  razorpayRefundId
+
+Payout
+  id
+  subOrderId
+  amount
+  status
+  razorpayPayoutId
+```
+
+### Why One Order
+
+The buyer pays once. Razorpay creates one order. The advance covers all sellers simultaneously. Splitting the payment across multiple Razorpay orders would require multiple checkout flows, multiple Razorpay UIs, and complex partial-payment reconciliation if one fails.
+
+### Why Many SubOrders
+
+Each seller has:
+- Independent pickup window and deadline
+- Independent OTP for collection
+- Independent payment link for remaining amount
+- Independent payout calculation
+- Independent cancellation (Seller A cancels → Seller A's SubOrder is CANCELLED, Seller B's continues)
+- Independent status machine
+
+A flat `Order` with seller-tagged line items cannot represent "Seller A's portion is COMPLETED, Seller B's is AWAITING_PAYMENT" without a JSONB column or a nullable field explosion.
+
+### Rejected Alternatives
+
+**JSONB sellers array:** `Order.sellers: [{sellerId, status, otp}]`
+- Not indexable — `WHERE sellerId = ?` is a table scan with JSONB extraction
+- State machine enforcement requires application-level guards on array elements
+- Cron queries (`WHERE status = PENDING AND createdAt < cutoff`) must extract array elements
+
+**Flat order with numbered seller columns:** `seller1Id`, `seller1Status`, `seller2Id`...
+- Breaks at any seller count beyond the hardcoded maximum
+- Schema migration required to support more sellers per order
+
+### Stock Locking at Seller Granularity
+
+Inside `prisma.$transaction()`, stock decrements are grouped by seller. Seller A's `SELECT FOR UPDATE` on Seller A's products does not block Seller B's concurrent checkout on Seller B's products. Per-seller parallelism, per-product serialisation.
+
+### Order Status Derivation
+
+`Order` has no `status` column. Status is derived:
+```typescript
+function deriveOrderStatus(subOrders: SubOrder[]): DerivedOrderStatus {
+  if (subOrders.every(s => s.status === "COMPLETED")) return "COMPLETED";
+  if (subOrders.every(s => s.status === "CANCELLED")) return "CANCELLED";
+  if (subOrders.some(s => s.status === "DISPUTED")) return "DISPUTED";
+  return "IN_PROGRESS";
+}
+```
+
+At current scale this is computed on read. At higher scale, a Postgres trigger maintaining a denormalized `Order.derivedStatus` column would be appropriate.
+
+---
+
+## 7. Concurrency Control — Pessimistic Locking
+
+**Problem:** Two buyers simultaneously checkout the last 1 unit of a SKU. Both read `available = 1`. Both attempt decrement. Without a lock, both succeed — `available` goes to `−1`.
+
+### Why Pessimistic Locking Over Optimistic
+
+**Optimistic locking** uses a `version: Int` column:
+```sql
+UPDATE "Product"
+SET available = available - $qty, version = version + 1
+WHERE id = $id AND version = $expectedVersion;
+```
+If another transaction already incremented `version`, this update affects 0 rows. The application detects this and retries the entire transaction.
+
+**The retry storm problem:** Kridha's hot SKUs are genuinely hot. A mill selling the last 50 kg of Mustard Oil at market close may have 20 buyers simultaneously. Under optimistic locking:
+- Round 1: 19 of 20 fail version check → retry
+- Round 2: 18 of 19 fail → retry
+- Round 3: exponential degradation of tail latency
+
+**Pessimistic locking** (`SELECT FOR UPDATE`) serialises at the DB layer:
+- Transaction 1 acquires row lock → decrements → commits
+- Transactions 2–20 queue behind the lock
+- Each reads the updated `available` in sequence
+- First N (where N ≤ available) succeed; rest get clean `409 INSUFFICIENT_STOCK`
+
+Deterministic, no retries, bounded latency.
+
+### Implementation
+
+```typescript
+// src/services/order.service.ts
 await prisma.$transaction(async (tx) => {
-  const product = await tx.$queryRaw<Product[]>`
-    SELECT * FROM "Product" WHERE id = ${productId} FOR UPDATE
+  // Lock the product row before reading available
+  const [product] = await tx.$queryRaw<Product[]>`
+    SELECT id, available, "minOrderQuantity"
+    FROM "Product"
+    WHERE id = ${productId}
+    FOR UPDATE
   `;
-  if (product[0].available < quantity) throw ERR.INSUFFICIENT_STOCK({ ... });
+
+  if (!product) throw ERR.PRODUCT_NOT_FOUND();
+  if (product.available < quantity) throw ERR.INSUFFICIENT_STOCK({ available: product.available });
+
+  // Decrement — lock held until COMMIT
   await tx.product.update({
     where: { id: productId },
-    data:  { available: { decrement: quantity } },
+    data: { available: { decrement: quantity } },
   });
-  // INSERT OrderItems, SubOrders, etc.
+
+  // All other writes in same transaction
+  const subOrder = await tx.subOrder.create({ ... });
+  await tx.orderItem.createMany({ ... });
+  await tx.orderStatusHistory.create({ ... });
+
 }, { isolationLevel: Prisma.TransactionIsolationLevel.ReadCommitted });
 ```
 
-The `CHECK (available >= 0)` DB constraint is a secondary safety net — it
-catches any bug that bypasses the application-level lock check (INV-01).
+### Advisory vs Hard Check
 
-**Load-test verification:** A stock-drain scenario run to zero mid-checkout
-surfaced a gap in cart-clearing logic on the client side (the cart did not
-clear after a `409`, allowing a retry against already-decremented stock in the
-UI state, not the DB state). The DB-level lock and the `CHECK` constraint held
-in every case — no row ever went negative. The bug was in client cart state,
-not the locking guarantee. Identified and corrected; full methodology in
-`README.md` → Performance Validation.
+```
+cartService.addItem(productId, quantity)
+  │
+  ├── Advisory check: product.available >= quantity ?
+  │   └── If no → throw INSUFFICIENT_STOCK immediately
+  │       (skips transaction overhead for obvious failures)
+  │
+  ▼ (only if advisory passes)
+orderService.createFromCart()
+  │
+  └── Hard check: SELECT FOR UPDATE → read available → compare
+      └── The only correctness guarantee. Advisory is performance only.
+```
+
+### Deadlock Prevention
+
+Deadlocks occur when Transaction A locks Row 1 then Row 2, while Transaction B locks Row 2 then Row 1. For multi-product orders:
+
+```typescript
+// Always lock products in consistent order (by productId)
+const sortedItems = items.sort((a, b) => a.productId.localeCompare(b.productId));
+for (const item of sortedItems) {
+  await tx.$queryRaw`SELECT id FROM "Product" WHERE id = ${item.productId} FOR UPDATE`;
+}
+```
+
+Consistent lock ordering eliminates the circular dependency that causes deadlocks. Postgres detects and resolves deadlocks when they occur by killing one transaction with a deadlock error (`P2034`). The service wraps this as `INTERNAL_ERROR`.
+
+### Isolation Level
+
+`ReadCommitted` (Postgres default): a transaction sees only committed data from other transactions. Combined with `SELECT FOR UPDATE`, this gives the correct behavior:
+- Transaction 1 commits `available = 0`
+- Transaction 2's `FOR UPDATE` waits, then reads `available = 0` (not the stale pre-commit value)
+
+Repeatable Read is not needed here — `FOR UPDATE` provides the locking guarantee independently.
+
+### DB Safety Net
+
+```sql
+ALTER TABLE "Product" ADD CONSTRAINT "check_available_non_negative"
+CHECK (available >= 0);
+```
+
+This is a secondary guard. It catches any bug that bypasses the application-level lock check. It should never be the first line of defence — but it guarantees that even a buggy code path cannot silently corrupt inventory.
 
 ---
 
-## 3. Spatial Discovery — PostGIS `ST_DWithin` + GIST Index
+## 8. Transactions — ACID Guarantees
 
-### Why Not Simple Lat/Lng Filters?
+### What Prisma `$transaction` Provides
 
-A naive approach:
-```sql
-WHERE ABS(latitude - $lat) < $latDelta AND ABS(longitude - $lng) < $lngDelta
+```typescript
+await prisma.$transaction(async (tx) => {
+  // Everything here commits together or rolls back together
+  // tx is a scoped Prisma client — use it for all DB calls inside
+});
 ```
-This is a bounding-box filter on Euclidean coordinates. It has two problems:
 
-1. **No index support.** Two separate B-Tree indexes on `latitude` and
-   `longitude` cannot be combined efficiently — the DB must scan one index and
-   filter on the other, or table-scan.
-2. **Inaccurate at scale.** 1° longitude ≠ same distance everywhere.
-   At Gorakhpur (26°N), 1° lng ≈ 99 km. At Srinagar (34°N), 1° lng ≈ 92 km.
-   A fixed delta produces elliptical, not circular, search regions.
+**Atomicity:** all writes commit or none do. A crash mid-transaction leaves no partial state.
+**Consistency:** DB constraints (CHECK, UNIQUE, FK) are evaluated at commit time.
+**Isolation:** `READ COMMITTED` by default. Concurrent transactions see committed state only.
+**Durability:** committed data survives crashes (Supabase/WAL).
 
-### PostGIS Geography Type + GIST Index
+### When Transactions Are Used
+
+1. **Order creation:** stock decrement + Order + SubOrder + OrderItems + OrderStatusHistory in one transaction. All succeed or none do.
+2. **Webhook processing:** WebhookLog insert + SubOrder status update + OrderStatusHistory in one transaction. Idempotency key (`@unique`) enforced atomically.
+3. **OTP verification:** SubOrder status update + OTP clearance (`deliveryOtp = null`) in one transaction.
+4. **Cancellation with refund:** SubOrder update + Refund create + stock restore in one transaction.
+
+### Compensating Transactions
+
+Distributed systems cannot have true rollback across service boundaries. When Razorpay is called after a Postgres commit, failure requires a compensating transaction:
+
+```
+1. prisma.$transaction commits:
+   - stock decremented
+   - Order created
+   - SubOrder created (PENDING)
+
+2. Razorpay order creation fails (network error / rate limit)
+
+3. Compensating transaction:
+   - SubOrder.status = CANCELLED
+   - Product.available += quantity (restore stock)
+   - OrderStatusHistory entry
+
+4. If compensating transaction also fails:
+   - logger.error with COMPENSATION_FAILED + full context
+   - Manual intervention required
+   - SubOrder.status remains PENDING → lazy expiry will clean up in ≤15 min
+```
+
+The compensating transaction is not a rollback — it is a forward correction. The original transaction's effects are real and committed. The compensation creates new DB state that cancels the business effect.
+
+### Nested Writes
+
+Prisma's `$transaction` does not support nested transactions (savepoints are not exposed). The pattern for nested operations is to pass `tx` down the call stack:
+
+```typescript
+await prisma.$transaction(async (tx) => {
+  await orderRepo.createOrder(tx, orderData);        // tx passed in
+  await orderRepo.createSubOrders(tx, subOrderData); // same tx
+});
+```
+
+Repository functions accept an optional `tx` parameter. When present, they use `tx` instead of `prisma`. When absent, they use `prisma` directly (for non-transactional reads).
+
+---
+
+## 9. Cookie-Only Auth Architecture
+
+**No Authorization header. No localStorage. No JWT in response body.**
+
+```
+Cookie             │ HttpOnly │ Path            │ MaxAge │ Purpose
+───────────────────┼──────────┼─────────────────┼────────┼──────────────────────────────────
+kridha_access      │ YES      │ /               │ 15 min │ JWT — route handlers verify
+kridha_refresh     │ YES      │ /api/auth       │ 7 days │ Rotation chain — hash in DB
+kridha_lang        │ NO       │ /               │ 1 year │ "hi" | "en" — next-intl reads
+kridha_access_exp  │ NO       │ /               │ 15 min │ Unix timestamp — proactive refresh
+```
+
+### Why HttpOnly Cookies
+
+**XSS resistance.** A client-rendered Next.js app has real XSS exposure. Any JavaScript-readable token (`localStorage`, non-HttpOnly cookie, response body) is exfiltrable by a malicious script in any dependency. HttpOnly cookies are inaccessible to JavaScript — `document.cookie` does not include them.
+
+**Shared device context.** UP Tier-2 buyers frequently use shared Android devices in shop environments. Multiple users share the same browser. An `localStorage` token from a previous session leaks to the next user of the device.
+
+**Rejected alternatives:**
+- `localStorage + Authorization header` — directly exfiltrable via XSS; rejected
+- In-memory storage (module-level variable) — lost on page refresh, forces re-login at supplier counter; rejected
+- `sessionStorage` — cleared on tab close, same XSS exposure; rejected
+
+### CSRF Mitigation
+
+HttpOnly cookies are sent automatically by the browser on any same-origin request — and also on cross-origin requests satisfying `SameSite: Lax` (GET navigation). Mutation endpoints require CSRF protection.
+
+**Double-submit pattern:**
+```
+1. On login: server sets kridha_csrf (non-HttpOnly, readable by JS)
+2. Client reads cookie, attaches as X-CSRF-Token header on mutations
+3. Middleware validates: header value === cookie value
+4. An attacker's forged cross-site request cannot read the non-HttpOnly cookie
+   → header is missing → middleware rejects
+```
+
+### Path Scoping
+
+`kridha_refresh` has `path=/api/auth`. The browser never sends this cookie to `/api/products`, `/api/orders`, or any other endpoint. A vulnerability in the product search endpoint cannot expose the refresh token — the browser would not have included it in the request.
+
+### Admin Separation
+
+```
+kridha_admin      │ HttpOnly │ path=/api/admin │ JWT signed with ADMIN_JWT_SECRET
+```
+
+Admin tokens use a separate signing secret. A compromised user JWT cannot be replayed against admin endpoints. Admin payload carries `type: "admin"` — middleware rejects any JWT without this claim at admin routes, even if the signing key were accidentally identical.
+
+---
+
+## 10. Token Family Rotation
+
+**Problem:** Simple refresh token rotation (issue new, invalidate old) fails silently when a token is stolen. The attacker uses the token first; the legitimate user's next attempt fails and they assume a session expiry. Theft is undetected.
+
+**Solution:** Token family rotation adds reuse detection. A rotated token presented again is evidence of theft and triggers full family revocation.
+
+### Schema
+
+```typescript
+// Prisma schema
+model UserSession {
+  id            String    @id @default(cuid())
+  userId        String
+  familyId      String    // groups all tokens in one refresh chain
+  tokenHash     String    // SHA-256 of current valid refresh token
+  parentHash    String?   // SHA-256 of previous token (for reuse detection)
+  ipAddress     String?
+  userAgent     String?
+  lastSeenIp    String?
+  lastSeenAt    DateTime?
+  expiresAt     DateTime
+  revokedAt     DateTime? // null = active, set = revoked
+  createdAt     DateTime  @default(now())
+
+  user          User      @relation(fields: [userId], references: [id])
+
+  @@index([userId])
+  @@index([familyId])
+}
+```
+
+### Token Issuance
+
+```typescript
+// On login or first token issue
+const familyId = crypto.randomUUID();
+const refreshToken = crypto.randomBytes(32).toString("hex");
+const tokenHash = sha256(refreshToken);
+
+await prisma.userSession.create({
+  data: {
+    userId,
+    familyId,
+    tokenHash,
+    parentHash: null,  // first token has no parent
+    expiresAt: addDays(new Date(), 7),
+  },
+});
+```
+
+### Rotation on Use
+
+```
+POST /api/auth/refresh
+  │
+  ├── 1. Decode refresh token from kridha_refresh cookie
+  ├── 2. SHA-256 hash the token
+  ├── 3. SELECT UserSession WHERE tokenHash = $hash AND revokedAt IS NULL
+  │
+  ├── ✅ Found (legitimate use):
+  │     a. Generate new refresh token
+  │     b. Update UserSession: tokenHash = newHash, parentHash = oldHash
+  │     c. Issue new access token (15 min)
+  │     d. Set new kridha_refresh cookie
+  │     e. Return 200
+  │
+  └── ❌ Not found — check if it's a rotated token:
+        SELECT UserSession WHERE parentHash = $hash
+        │
+        ├── Found: THIS IS REUSE OF A ROTATED TOKEN
+        │     a. SELECT all sessions WHERE familyId = session.familyId
+        │     b. UPDATE all: revokedAt = NOW()
+        │     c. logger.fatal({ event: "TOKEN_THEFT_DETECTED", userId, familyId })
+        │     d. Return 401
+        │
+        └── Not found: token is unknown (expired, manually cleared, etc.)
+              Return 401
+```
+
+### Stolen Token Scenario
+
+```
+T=0: User logs in → RefreshToken A issued (familyId: xyz)
+T=1: Attacker steals RefreshToken A (XSS, interception, etc.)
+T=2: Attacker uses RefreshToken A → RefreshToken B issued, A's hash becomes parentHash
+T=3: User tries to use RefreshToken A (their copy)
+     → A's hash not found as current tokenHash
+     → A's hash found as parentHash of B's session
+     → Theft detected: entire family xyz revoked
+     → User and attacker both logged out
+     → Fatal alert fired
+```
+
+### Why Family Rotation Over Simple Rotation
+
+Simple rotation: `tokenHash` replaced on use, old token rejected.
+- Legitimate double-send (network retry) logs out the user
+- Theft only detected if user happens to refresh after attacker did
+- No alert fired
+
+Family rotation: reuse of any already-rotated token revokes the entire chain.
+- Theft detected the moment the legitimate user next refreshes
+- Alert fired immediately
+- Attacker loses access
+
+### Client-Side Deduplication
+
+A slow network causes the client to send the same refresh request twice before receiving a response. Without client-side deduplication, the second request carries the already-rotated token and triggers theft detection — a false positive.
+
+See §11 for the client-side refresh lock that prevents this.
+
+---
+
+## 11. Refresh Token Flow — Silent Refresh
+
+**Problem:** Access tokens expire every 15 minutes. A user browsing the app should never see a login redirect due to expiry. Concurrent requests during a refresh should not all attempt their own refresh simultaneously.
+
+### Token Expiry Detection
+
+`kridha_access_exp` is a non-HttpOnly cookie containing the access token's Unix expiry timestamp. The Axios request interceptor reads this before each request:
+
+```typescript
+// src/lib/api.ts
+axiosInstance.interceptors.request.use(async (config) => {
+  const expiry = getCookie("kridha_access_exp");
+  const expiresAt = expiry ? parseInt(expiry, 10) * 1000 : 0;
+  const needsRefresh = Date.now() > expiresAt - 60_000; // 60s buffer
+
+  if (needsRefresh) {
+    await refreshTokens(); // see below
+  }
+
+  return config;
+});
+```
+
+### Refresh Lock — Race Condition Prevention
+
+Without a lock, multiple concurrent requests all detect expiry simultaneously and all attempt a refresh. The second refresh arrives with the already-rotated token and triggers false theft detection.
+
+```typescript
+// src/lib/api.ts
+let isRefreshing = false;
+let refreshQueue: Array<{ resolve: () => void; reject: (e: Error) => void }> = [];
+
+async function refreshTokens(): Promise<void> {
+  if (isRefreshing) {
+    // Another refresh is already in flight — queue this caller
+    return new Promise((resolve, reject) => {
+      refreshQueue.push({ resolve, reject });
+    });
+  }
+
+  isRefreshing = true;
+
+  try {
+    // Use a clean Axios instance with NO interceptors
+    // to prevent recursive refresh loops
+    await refreshClient.post("/api/auth/refresh");
+
+    // Drain queue — all waiting callers can now proceed
+    refreshQueue.forEach(q => q.resolve());
+  } catch (err) {
+    // Refresh failed — reject all queued callers
+    refreshQueue.forEach(q => q.reject(err as Error));
+    throw err;
+  } finally {
+    isRefreshing = false;
+    refreshQueue = [];
+  }
+}
+```
+
+### Why a Clean Axios Instance for Refresh
+
+`refreshClient` is a separate `axios.create()` instance with no interceptors attached:
+
+```typescript
+const refreshClient = axios.create({
+  baseURL: "/api",
+  withCredentials: true,
+});
+// No interceptors — intentional
+```
+
+If the main `axiosInstance` were used for the refresh call:
+1. Refresh request fires
+2. Interceptor checks expiry again
+3. Token still expired (refresh hasn't returned yet)
+4. Interceptor calls `refreshTokens()` again
+5. Infinite recursion / `isRefreshing` lock saves it but wastes a request
+
+The clean client bypasses the interceptor entirely.
+
+### Response Interceptor — 401 Handling
+
+```typescript
+axiosInstance.interceptors.response.use(
+  (response) => response,
+  async (error) => {
+    if (error.response?.status === 401 && !error.config._retried) {
+      error.config._retried = true;
+
+      try {
+        await refreshTokens();
+        // Replay the original failed request with new tokens
+        return axiosInstance(error.config);
+      } catch {
+        // Refresh failed — redirect to login
+        window.location.href = `/auth/login?redirect=${window.location.pathname}`;
+      }
+    }
+    return Promise.reject(error);
+  }
+);
+```
+
+`_retried` flag prevents infinite retry if the replayed request also 401s (e.g. resource genuinely not authorized for this user).
+
+### Multiple Tabs
+
+Each browser tab runs its own JavaScript context with its own `isRefreshing` flag. Two tabs can simultaneously attempt refresh. The second refresh arrives with the rotated token:
+- The server detects reuse → revokes the family → returns 401
+- Both tabs redirect to login
+
+This is correct behavior — a simultaneously refreshing second tab is indistinguishable from token theft at the server. The tradeoff (rare double-logout) is accepted over the alternative of server-side coordination complexity.
+
+---
+
+## 12. Idempotency — Webhook Processing
+
+**Problem:** Razorpay retries webhook delivery on any non-200 response, and occasionally redelivers even after a 200 acknowledgment (failover, retry races). The same `payment.captured` event delivered 100 times must produce exactly one DB write.
+
+### Why Application-Level Checks Are Insufficient
+
+```typescript
+// ❌ Wrong — race condition between check and insert
+const existing = await prisma.webhookLog.findFirst({
+  where: { razorpayPaymentId: paymentId }
+});
+if (existing) return res.status(200).json({ received: true }); // duplicate
+await prisma.webhookLog.create({ data: { razorpayPaymentId: paymentId } });
+// ← Two concurrent requests both pass the findFirst check and both reach here
+```
+
+The gap between `findFirst` and `create` is a race window. Two concurrent identical webhook deliveries both pass the check and both proceed to create — producing two Payment rows, two SubOrder transitions, two notifications.
+
+### DB-Level Idempotency
+
+```typescript
+// WebhookLog schema
+model WebhookLog {
+  id                  String   @id @default(cuid())
+  razorpayPaymentId   String   @unique  // ← the atomic guard
+  event               String
+  processedAt         DateTime @default(now())
+}
+```
+
+```typescript
+// Handler
+try {
+  await prisma.$transaction([
+    prisma.webhookLog.create({
+      data: { razorpayPaymentId, event }
+      // If this is a duplicate, the @unique constraint throws P2002
+      // The entire transaction rolls back — no Payment row, no state transition
+    }),
+    prisma.payment.update({ ... }),
+    prisma.subOrder.update({ data: { status: "CONFIRMED" } }),
+    prisma.orderStatusHistory.create({ ... }),
+  ]);
+} catch (err) {
+  if (isPrismaUniqueViolation(err)) {
+    // Duplicate delivery — already processed, nothing to do
+    return res.status(200).json({ received: true });
+  }
+  throw err; // re-throw unexpected errors
+}
+```
+
+Concurrent duplicate deliveries race at the Postgres level. Exactly one `INSERT INTO WebhookLog` wins; all others fail the `@unique` constraint. The transaction for losers rolls back entirely. The Payment update and SubOrder transition execute exactly once.
+
+### Sequence Diagram
+
+```
+Razorpay ──► POST /api/webhooks/razorpay (delivery 1)
+Razorpay ──► POST /api/webhooks/razorpay (delivery 2, concurrent)
+                    │                    │
+                    ▼                    ▼
+             HMAC verify           HMAC verify
+                    │                    │
+                    ▼                    ▼
+       $transaction starts      $transaction starts
+       WebhookLog.create()      WebhookLog.create()
+                    │                    │
+                    ▼                    ▼
+         INSERT succeeds       INSERT fails (P2002 @unique)
+                    │                    │
+                    ▼                    ▼
+       Payment.update()         Transaction rolls back
+       SubOrder → CONFIRMED               │
+       StatusHistory.create()             │
+       Transaction commits               ▼
+                    │           catch P2002 → 200 { received: true }
+                    ▼
+          200 { received: true }
+```
+
+### Why Always Return 200
+
+Razorpay retries on any non-200 response. Returning 400 for invalid signatures or 500 for processing errors triggers exponential backoff retries — flooding logs, burning webhook quota, and potentially triggering Razorpay's retry exhaustion behavior (which may disable webhook delivery for the account).
+
+Always returning 200 signals "received and handled." What the handler did with the event is internal. Invalid signatures are logged and silently discarded.
+
+### HMAC Verification
+
+```typescript
+import { createHmac, timingSafeEqual } from "crypto";
+
+function verifyWebhookSignature(body: string, signature: string): boolean {
+  const expected = createHmac("sha256", process.env.RAZORPAY_WEBHOOK_SECRET!)
+    .update(body)
+    .digest("hex");
+
+  // timingSafeEqual prevents timing attacks that leak signature bytes
+  // by measuring response time at each character mismatch
+  return timingSafeEqual(
+    Buffer.from(expected, "hex"),
+    Buffer.from(signature, "hex"),
+  );
+}
+```
+
+Standard string comparison short-circuits at the first mismatched byte. An attacker submitting requests with incrementally correct signatures can measure response time to recover the full expected signature. `timingSafeEqual` compares all bytes in constant time regardless of where the mismatch occurs.
+
+---
+
+## 13. Cache-Aside — Product Feed
+
+**Problem:** `productRepo.findNearby` runs a PostGIS radius query with 5-table joins. At steady state, most product feed requests have identical or near-identical parameters (same city, same radius, same page). Running the full query for every request is wasteful.
+
+### Pattern
+
+```
+Request arrives
+      │
+      ▼
+      cacheGet(key)
+      │
+      ├── HIT → return cached JSON
+      │
+      └── MISS → run DB query
+                  │
+                  ▼
+                  cacheSet(key, result, TTL)  ← fire-and-forget
+                  │
+                  ▼
+                  return result
+```
+
+```typescript
+// Cache key
+const key = `products:${roundTo3dp(lat)}:${roundTo3dp(lng)}:${radius}:${category}:${sortBy}:${page}`;
+```
+
+### Why Lat/Lng Rounded to 3 Decimal Places
+
+3dp ≈ 111m precision. Buyers within 111m of each other share a cache entry. Without rounding, two buyers 5m apart with GPS noise in the 5th–6th decimal place generate different cache keys and each trigger a PostGIS query.
+
+At Gorakhpur scale (city radius ~15 km), the effective cache key space at 3dp is bounded and manageable. At 4dp it fragments too finely; at 2dp it conflates distinct search areas.
+
+### TTL Design
+
+```
+Key type                    TTL      Rationale
+────────────────────────── ──────── ───────────────────────────────────────
+products:{geo}:{filters}   60s      Matches TanStack Query staleTime on client
+product:{id}               300s     Product detail changes infrequently
+deals:{geo}                120s     Deals expire on a cron schedule
+seller:{userId}            600s     Seller profiles rarely change
+notifications:{userId}     30s      Notifications need near-real-time freshness
+platform-config            3600s    Manual invalidation only
+```
+
+### Invalidation
+
+```typescript
+// On product create / PATCH / DELETE
+async function invalidateProductCache(productId: string, sellerId: string) {
+  await cacheDelete(`product:${productId}`);
+  // Pattern-delete all listing keys
+  // Note: SCAN + DEL is O(n) in key count — see Known Limitations
+  await cacheDeletePattern(`products:*`);
+}
+```
+
+Invalidation is write-through — every product mutation invalidates relevant cache entries. The listing key pattern-delete is broad (any product change invalidates all listing caches) because the product may appear in many different geographic/filter combinations.
+
+### Cache Stampede
+
+**Problem:** A cache TTL expires while 100 concurrent requests all miss and all fire the PostGIS query simultaneously — pool exhaustion.
+
+**Current state:** Not yet mitigated. This is a known gap (see §26).
+
+**Mitigation (planned):**
+```typescript
+async function withCache<T>(key: string, ttl: number, fn: () => Promise<T>): Promise<T> {
+  const cached = await cacheGet<T>(key);
+  if (cached) return cached;
+
+  // Short-lived lock prevents stampede
+  const lockKey = `lock:${key}`;
+  const acquired = await redis.set(lockKey, "1", { NX: true, EX: 2 });
+
+  if (!acquired) {
+    // Another request is populating — wait briefly and retry
+    await sleep(100);
+    return withCache(key, ttl, fn); // retry will likely hit cache
+  }
+
+  try {
+    const result = await fn();
+    await cacheSet(key, result, ttl);
+    return result;
+  } finally {
+    await redis.del(lockKey);
+  }
+}
+```
+
+### Fail-Open
+
+All cache operations swallow errors:
+```typescript
+async function cacheGet<T>(key: string): Promise<T | null> {
+  try {
+    const value = await redis.get(key);
+    return value ? JSON.parse(value) : null;
+  } catch {
+    logger.warn({ event: "cache_miss_on_error", key });
+    return null; // fall through to DB
+  }
+}
+```
+
+A Redis outage degrades to direct DB queries. Correctness is unaffected. Rate limiting uses a different failure mode — see §14.
+
+### Distinction from Rate-Limit State
+
+Redis caching (§13): fail-open. Redis outage means more DB reads.
+Redis rate limiting (§14): fail-closed. Redis outage means requests blocked.
+
+These are the same Redis instance but with opposite failure modes by design.
+
+---
+
+## 14. Rate Limiting — Three Layers
+
+**Problem:** Per-IP limiting is the standard approach but defeated by a botnet rotating 1000 IPs. After authentication, per-account limiting is needed. Global platform limits prevent DDoS on auth endpoints specifically.
+
+### Three Layers
+
+```
+Layer 1: Per-IP sliding window
+  Key:     ratelimit:ip:{hashedIP}
+  Limit:   5 attempts/min (auth routes), 60/min (general)
+  Defeats: Single-source brute force
+  Bypass:  IP rotation (defeated by Layer 2)
+
+Layer 2: Per-account sliding window
+  Key:     ratelimit:account:{last6digitsOfPhone}
+  Limit:   10 attempts / 15 min
+  Defeats: IP-rotating credential stuffing
+  Why last 6 digits: consistent per-account key regardless of which IP the attacker uses
+
+Layer 3: Global platform ceiling
+  Key:     ratelimit:global:auth
+  Limit:   500 auth req/min platform-wide
+  Defeats: Distributed DDoS against auth endpoint specifically
+```
+
+### Sliding Window Algorithm
+
+```typescript
+// Using @upstash/ratelimit with Redis sorted sets
+// Window: 60s, limit: 5
+
+async function checkRateLimit(key: string, limit: number, windowMs: number): Promise<boolean> {
+  const now = Date.now();
+  const windowStart = now - windowMs;
+
+  const pipeline = redis.pipeline();
+  pipeline.zremrangebyscore(key, 0, windowStart);   // remove expired entries
+  pipeline.zadd(key, now, `${now}-${Math.random()}`); // add current request
+  pipeline.zcard(key);                               // count in window
+  pipeline.expire(key, Math.ceil(windowMs / 1000)); // TTL cleanup
+
+  const results = await pipeline.exec();
+  const count = results[2] as number;
+
+  return count <= limit; // true = allowed
+}
+```
+
+### Why Fail Closed
+
+```typescript
+async function rateLimit(key: string, limit: number, window: number): Promise<void> {
+  try {
+    const allowed = await checkRateLimit(key, limit, window);
+    if (!allowed) throw new AppError("RATE_LIMITED", 429);
+  } catch (err) {
+    if (err instanceof AppError) throw err; // re-throw rate limit errors
+
+    // Redis unavailable — fail closed
+    logger.error({ event: "rate_limit_redis_error", key });
+    throw new AppError("RATE_LIMITED", 429, { reason: "rate_limit_unavailable" });
+  }
+}
+```
+
+**Original behavior (incorrect):** Redis error → catch swallowed → request passes through. During a Redis outage, rate limiting was silently disabled — the worst possible time, since an infrastructure failure is when an attacker would attempt to exploit the gap.
+
+**Corrected behavior:** Redis error → treat as "cannot verify limit" → block request. A Redis outage now degrades auth availability, not security posture.
+
+---
+
+## 15. Spatial Discovery — PostGIS
+
+**Problem:** `WHERE ABS(latitude - $lat) < delta` is not indexable and geometrically inaccurate at India's latitudes. 1° longitude in Gorakhpur ≈ 99km, but 1° in Srinagar ≈ 92km. Fixed deltas produce elliptical, not circular, search areas.
+
+### Why PostGIS Geography (Not Geometry)
 
 ```sql
--- Migration (executed once on DB init)
+-- geometry: flat 2D Euclidean plane — correct only for small areas
+-- geography: WGS-84 ellipsoid — geodesic distances, correct globally
+
 ALTER TABLE "Product"
   ADD COLUMN location geography(Point, 4326)
   GENERATED ALWAYS AS (
     ST_SetSRID(ST_MakePoint(longitude, latitude), 4326)
   ) STORED;
-
-CREATE INDEX "Product_location_gist"
-  ON "Product" USING GIST (location);
 ```
 
-`geography(Point, 4326)` stores coordinates on the WGS-84 ellipsoid —
-the same datum used by GPS. `ST_DWithin` on geography types computes
-**true geodesic distance in metres** (not degrees), accounting for Earth's
-curvature. Accurate to within centimetres at India-scale distances.
+`geography` computes true geodesic distance in metres. `ST_DWithin(location, target, 5000)` returns all rows within exactly 5km, accounting for Earth's curvature. At India-scale distances (up to ~50km radius), the error from using flat `geometry` is ~0.2% — small but nonzero.
 
-Supabase ships PostGIS as a first-class enabled extension on its Postgres
-instances (`CREATE EXTENSION IF NOT EXISTS postgis;` is a one-line migration,
-no separate spatial database needed) — the geography type and GIST indexing
-above run on the same Postgres instance as every other table in Kridha.
+### GIST Index
 
-**Spatial Indexing — Why GIST?**
+```sql
+CREATE INDEX "Product_location_gist" ON "Product" USING GIST (location);
+```
 
-A B-Tree index is one-dimensional. Geographic coordinates are two-dimensional.
-A GIST (Generalised Search Tree) index partitions 2D space into bounding boxes
-using an R-Tree strategy. For a radius query, PostGIS intersects the query
-circle's bounding box with the GIST index pages — discarding most of the table
-without reading it.
+B-Tree indexes are 1D. Geographic points are 2D. GIST (Generalised Search Tree) builds an R-Tree of bounding boxes. For a radius query:
+1. Intersect query circle's bounding box with GIST pages (cheap — eliminates most of the table)
+2. Check remaining candidates with exact `ST_DWithin` predicate
 
-At 500 products within a 50 km radius, a GIST-indexed `ST_DWithin` reads
-O(log n) index pages + O(k) matching rows, where k is the result count.
-A lat/lng table scan reads O(n) rows regardless.
+Without the GIST index: O(n) table scan for every product feed request. With it: O(log n) index lookup + O(k) candidate checks.
 
-**KNN Operator for Distance Sort**
+### KNN Sort
 
 ```sql
 ORDER BY
-  COALESCE(p.location, ST_SetSRID(ST_MakePoint(p.longitude, p.latitude), 4326)::geography)
-  <-> ST_MakePoint($lng, $lat)::geography ASC
+  location <-> ST_MakePoint($lng, $lat)::geography ASC
 ```
 
-The `<->` operator is PostGIS's KNN (K-Nearest-Neighbour) operator. It uses
-the GIST index to return rows in distance order **without computing distance
-for every row** — the index provides the ordering. This is significantly faster
-than `ORDER BY ST_Distance(...) ASC` which requires a full distance computation
-per row after the `WHERE` filter.
+`<->` is the KNN (K-Nearest-Neighbour) distance operator. It uses the GIST index to return results in distance order **without computing distance for every row**. The index traversal provides approximate ordering; exact distances are computed only for the result set. This is significantly faster than `ORDER BY ST_Distance(location, target) ASC` which computes exact distances for every row that passes the `WHERE` filter.
 
-**Composable SQL with `Prisma.sql`**
+### Why `$queryRaw` Instead of Prisma ORM
 
-The Prisma ORM cannot construct spatial predicates for `Unsupported()`
-geography columns. All product discovery uses `prisma.$queryRaw` with
-`Prisma.sql` tagged template fragments — all user inputs are parameterised,
-never interpolated:
+Prisma cannot construct `ST_DWithin` predicates for `Unsupported("geography(Point, 4326)")` columns. The geography type is not a Prisma-native type — it appears as `Unsupported()` in the schema and cannot be used in `prisma.product.findMany({ where: { ... } })` with spatial predicates.
 
 ```typescript
 // src/lib/postgis.ts
-const geoFilter = Prisma.sql`
-  AND ST_DWithin(
-    COALESCE(
-      p."location",
-      ST_SetSRID(ST_MakePoint(p."longitude", p."latitude"), 4326)::geography
-    ),
-    ST_MakePoint(${f.lng}, ${f.lat})::geography,
-    ${f.radiusM}
-  )`;
+export function buildNearbyQuery(f: GeoFilters, excludeSellerId?: string) {
+  const geoFilter = Prisma.sql`
+    AND ST_DWithin(
+      COALESCE(
+        p."location",
+        ST_SetSRID(ST_MakePoint(p."longitude", p."latitude"), 4326)::geography
+      ),
+      ST_MakePoint(${f.lng}, ${f.lat})::geography,
+      ${f.radiusM}
+    )`;
+
+  const excludeClause = excludeSellerId
+    ? Prisma.sql`AND p."sellerId" != ${excludeSellerId}`
+    : Prisma.empty;
+
+  return Prisma.sql`
+    SELECT p.*, ST_Distance(
+      p.location, ST_MakePoint(${f.lng}, ${f.lat})::geography
+    ) / 1000.0 AS distance_km
+    FROM "Product" p
+    WHERE p."productStatus" = 'ACTIVE'
+      AND p."deletedAt" IS NULL
+      ${geoFilter}
+      ${excludeClause}
+    ORDER BY
+      p.location <-> ST_MakePoint(${f.lng}, ${f.lat})::geography ASC
+    LIMIT ${f.limit} OFFSET ${(f.page - 1) * f.limit}
+  `;
+}
 ```
 
-`COALESCE` guards against NULL `location` values — products inserted before
-the generated column migration still resolve via their stored `latitude`/
-`longitude` columns.
+All user inputs are Prisma.sql parameters — never string-interpolated. SQL injection is prevented at the library level.
 
-**Why this matters in practice, not just in theory:** the `GENERATED ALWAYS`
-geography column rejected ORM-path inserts during seed-data population —
-Prisma's default insert path does not satisfy the generated-column expression.
-Fixed with a raw SQL insert using `ST_SetSRID(ST_MakePoint(...))` issued
-against Supabase's direct connection string (port 5432, not the pooled 6543
-endpoint — see §4). The `COALESCE` guard above exists specifically because of
-this — any row inserted via a path that bypasses the generated column still
-resolves correctly from its raw `latitude`/`longitude` columns.
+### Generated Column Issue
 
-**INV-14 — Seller Feed Exclusion**
-
-```typescript
-const excludeClause = f.excludeSellerId
-  ? Prisma.sql`AND p."sellerId" != ${f.excludeSellerId}`
-  : Prisma.empty;
-```
-
-When `getOptionalUser(req)` resolves a caller, their `userId` is passed as
-`excludeSellerId`. Sellers browsing the buyer feed do not see their own
-products. Anonymous requests pass no `excludeSellerId` — no exclusion applied.
+The `GENERATED ALWAYS AS` column rejected inserts via Prisma's default ORM path during seeding:
+- Prisma's `product.create()` includes `location` in the INSERT, which conflicts with `GENERATED ALWAYS`
+- Fix: seed via raw SQL against `DIRECT_URL` (not pooled): `INSERT INTO "Product" (longitude, latitude, ...) VALUES ($1, $2, ...)` — the generated column populates automatically
+- `COALESCE(p.location, ST_SetSRID(ST_MakePoint(...)))` in queries guards against rows where the generated column is NULL (inserted via the ORM path before the fix)
 
 ---
 
-## 4. Infrastructure Resilience — Supabase Pooler Retry
+## 16. Error Handling — Typed Errors
 
-### The Problem: Transient Pooled-Connection Failures
+**Problem:** Throwing strings (`throw "stock insufficient"`) produces non-parseable errors, inconsistent HTTP status codes, and no machine-readable error identification.
 
-Kridha connects to Postgres through Supabase's two connection modes:
-
-```
-DATABASE_URL   → pgBouncer pooled connection, port 6543, transaction mode
-DIRECT_URL     → direct connection, port 5432, no pooler in front
-```
-
-The pooled endpoint (`DATABASE_URL`) is what the application uses at request
-time — pgBouncer multiplexes many short-lived Prisma client connections over a
-smaller number of real Postgres backend connections. Under two conditions this
-surfaces transient connection errors that are not application bugs:
-
-1. **Free-tier project pause.** Supabase pauses a free-tier project's compute
-   after 7 days with no activity. The first request after a pause must wait
-   for the project to resume before the pooler can reach Postgres at all.
-2. **Pooler connection churn.** In transaction-pooling mode, pgBouncer can
-   recycle a connection between statements. Under bursty concurrent load this
-   occasionally surfaces as a dropped connection mid-request rather than a
-   query error — a different failure shape than a query syntax or constraint
-   problem.
-
-`Prisma` surfaces both as variants of:
-
-```
-PrismaClientInitializationError: P1001 — Can't reach database server
-```
-
-```
-"Connection terminated unexpectedly"   — pooled connection recycled mid-request
-"ECONNREFUSED"                          — port not yet accepting connections (project resuming)
-"Timed out fetching a new connection"   — pool exhausted under burst
-```
-
-These are **transient** by nature — the underlying Postgres instance is
-healthy, the connection path to it is temporarily unavailable. Without retry,
-the first request after a pause, or any request caught in pooler churn under
-load, returns a 500 to the user. This is exactly the class of failure the
-production load test (see `README.md` → Performance Validation) was designed
-to surface: testing against `next dev` locally does not reproduce Supabase's
-pooled-connection behavior under concurrency the way a production build
-hitting the real pooled endpoint does.
-
-### `withRetry` — Backoff Wrapper
+### AppError
 
 ```typescript
-// src/lib/db.ts
+export class AppError extends Error {
+  constructor(
+    public code: string,       // machine-readable: "INSUFFICIENT_STOCK"
+    public statusCode: number, // HTTP status: 409
+    public meta?: object,      // context: { available: 3, requested: 10 }
+  ) {
+    super(code);
+  }
+}
+```
+
+### Error Factory
+
+```typescript
+// src/lib/errors.ts
+export const ERR = {
+  INSUFFICIENT_STOCK: (meta?: { available: number; requested: number }) =>
+    new AppError("INSUFFICIENT_STOCK", 409, meta),
+
+  INVALID_TRANSITION: (meta?: { from: string; to: string }) =>
+    new AppError("INVALID_TRANSITION", 409, meta),
+
+  PRODUCT_NOT_FOUND: () => new AppError("PRODUCT_NOT_FOUND", 404),
+
+  RATE_LIMITED: (meta?: object) =>
+    new AppError("RATE_LIMITED", 429, meta),
+
+  // ... 39 total error codes
+};
+```
+
+### Global Handler
+
+```typescript
+// src/lib/handle-error.ts
+export function handleError(err: unknown, req: Request): Response {
+  if (err instanceof AppError) {
+    logger.warn({ code: err.code, status: err.statusCode, meta: err.meta });
+    return jsonResponse({ success: false, code: err.code, message: err.message, meta: err.meta }, err.statusCode);
+  }
+
+  if (err instanceof ZodError) {
+    return jsonResponse({ success: false, code: "VALIDATION_ERROR", errors: err.flatten() }, 400);
+  }
+
+  // Unknown errors — log full stack, return generic 500
+  logger.error({ err, event: "unhandled_error" });
+  Sentry.captureException(err);
+  return jsonResponse({ success: false, code: "INTERNAL_ERROR" }, 500);
+}
+```
+
+### Response Envelope
+
+Every endpoint returns:
+```json
+// Success
+{ "success": true, "data": { ... } }
+
+// Error
+{ "success": false, "code": "INSUFFICIENT_STOCK", "message": "Not enough stock", "meta": { "available": 0 } }
+```
+
+The client checks `success`, then inspects `code` to determine UI behaviour. `code` is machine-readable and stable across versions. `message` is human-readable and may change.
+
+---
+
+## 17. Logging — Structured + Redacted
+
+**Problem:** `console.log` produces unstructured strings — unsearchable, unfiltered, uncorrelatable across concurrent requests.
+
+### Pino
+
+```typescript
+// src/lib/logger.ts
+import pino from "pino";
+
+export const logger = pino({
+  level: process.env.NODE_ENV === "production" ? "info" : "debug",
+  redact: {
+    paths: [
+      "pin", "otp", "deliveryOtp", "refreshToken",
+      "req.headers.cookie", "res.headers['set-cookie']",
+      "accountNumber", "ifscCode", "panNumber",
+      "razorpayKeySecret", "webhookSecret", "adminJwtSecret",
+      "encryptionKey", "cloudinaryApiSecret", "cronSecret",
+    ],
+    censor: "[REDACTED]",
+  },
+});
+```
+
+### Request Correlation
+
+```typescript
+// src/lib/with-logger.ts
+export function withLogger(handler: Handler, action: string): Handler {
+  return async (req) => {
+    const requestId = crypto.randomUUID();
+    const start = Date.now();
+
+    const childLogger = logger.child({ requestId, action });
+    req.logger = childLogger;
+
+    try {
+      const res = await handler(req);
+      childLogger.info({
+        method: req.method,
+        path: new URL(req.url).pathname,
+        status: res.status,
+        ms: Date.now() - start,
+      });
+      return res;
+    } catch (err) {
+      childLogger.error({ err, ms: Date.now() - start });
+      throw err;
+    }
+  };
+}
+```
+
+Every log line from a request carries the same `requestId`. A production incident is debugged by filtering `WHERE requestId = 'abc-123'` across all log lines — exact request path, timing, and any errors.
+
+### Security Events
+
+```typescript
+// Specific security events fire at elevated severity
+logger.fatal({ event: "TOKEN_THEFT_DETECTED", userId, familyId });       // token reuse
+logger.warn({  event: "CREDENTIAL_STUFFING_SUSPECTED", ip, attempts });  // rate limit exceeded
+logger.info({  event: "IP_CHANGE_ON_REFRESH", userId, from, to });       // session anomaly
+```
+
+GlitchTip receives `fatal` and `error` severity events via Sentry SDK (`@sentry/nextjs` pointed at GlitchTip DSN). Email alert fires on new error types.
+
+### Redaction
+
+Redaction happens before serialisation. The value never appears in the output buffer. 14 fields are redacted:
+`pin`, `otp`, `deliveryOtp`, `refreshToken`, `Cookie header`, `Set-Cookie header`, `accountNumber`, `ifscCode`, `panNumber`, `razorpayKeySecret`, `webhookSecret`, `adminJwtSecret`, `encryptionKey`, `cloudinaryApiSecret`.
+
+---
+
+## 18. Database Design — Indexes, Constraints, Schema
+
+### Key Constraints
+
+```sql
+-- Inventory floor — catches bugs that bypass the lock
+ALTER TABLE "Product" ADD CONSTRAINT "check_available_non_negative"
+  CHECK (available >= 0);
+
+-- Webhook idempotency — atomic guard
+ALTER TABLE "WebhookLog" ADD CONSTRAINT "webhooklog_payment_id_unique"
+  UNIQUE ("razorpayPaymentId");
+
+-- Review uniqueness — one review per order line
+ALTER TABLE "Review" ADD CONSTRAINT "review_suborder_product_unique"
+  UNIQUE ("subOrderId", "productId");
+
+-- Store identity — store name + street uniquely identifies a seller location
+ALTER TABLE "SellerProfile" ADD CONSTRAINT "seller_storename_street_unique"
+  UNIQUE ("storeName", "street");
+```
+
+### Key Indexes
+
+```sql
+-- Spatial — primary index for all proximity queries
+CREATE INDEX "Product_location_gist" ON "Product" USING GIST (location);
+
+-- Text search — trigram acceleration for ILIKE product name search
+CREATE EXTENSION IF NOT EXISTS pg_trgm;
+CREATE INDEX "Product_nameEn_gin" ON "Product" USING GIN ("nameEn" gin_trgm_ops);
+CREATE INDEX "Product_nameHi_gin" ON "Product" USING GIN ("nameHi" gin_trgm_ops);
+
+-- Expiry cron — fast lookup for expired pending orders
+CREATE INDEX "SubOrder_status_pickupDeadline" ON "SubOrder" ("status", "pickupDeadline")
+  WHERE status = 'PENDING';  -- partial index, only indexes relevant rows
+
+-- Seller's order inbox — sellers querying their incoming orders
+CREATE INDEX "SubOrder_sellerId_status" ON "SubOrder" ("sellerId", "status");
+
+-- Buyer's order history
+CREATE INDEX "Order_buyerId_createdAt" ON "Order" ("buyerId", "createdAt" DESC);
+
+-- Token lookup — hot path on every auth refresh
+CREATE INDEX "UserSession_tokenHash" ON "UserSession" ("tokenHash")
+  WHERE "revokedAt" IS NULL;  -- partial index, active sessions only
+
+-- Family revocation
+CREATE INDEX "UserSession_familyId" ON "UserSession" ("familyId");
+```
+
+### Why Partial Indexes
+
+The expiry cron query: `WHERE status = 'PENDING' AND pickupDeadline < NOW()`. Over time, the vast majority of SubOrders are CONFIRMED, COMPLETED, or CANCELLED. A full index on `(status, pickupDeadline)` grows with the entire table. A partial index `WHERE status = 'PENDING'` indexes only the relevant rows — stays small regardless of historical order volume.
+
+Similarly, `UserSession WHERE revokedAt IS NULL` only indexes active sessions. Revoked sessions (the majority over time) are excluded.
+
+### Foreign Key Enforcement
+
+All FK relationships are enforced at the DB level, not only in Prisma schema. Prisma schema is the source of truth for generating migrations, but the actual constraints exist in Postgres and would reject inconsistent writes even if Prisma were bypassed.
+
+### `pickupDeadline` — Stored, Not Computed
+
+```typescript
+// At order creation
+const window = await pickupWindowRepo.findById(pickupWindowId);
+const pickupDeadline = combineDateAndTime(pickupDate, window.endTime);
+// stored as DateTime on SubOrder
+```
+
+`WHERE "pickupDeadline" < NOW()` with a B-Tree index is O(log n). A computed `pickupDate + window.endTime` in the query would be non-indexable — every row requires evaluation.
+
+---
+
+## 19. Infrastructure Resilience — Supabase Pooler Retry
+
+### Connection Architecture
+
+```
+Application (Vercel) ──► DATABASE_URL (port 6543, pgBouncer pooled)
+Migrations / Seed   ──► DIRECT_URL   (port 5432, direct Postgres)
+```
+
+pgBouncer in transaction-pooling mode: a connection from the application pool is returned to pgBouncer after each transaction, not held for the request duration. This multiplexes many application connections over fewer Postgres backend connections — efficient at scale, but surfaces as dropped connections under bursty load.
+
+### Failure Modes
+
+```
+Failure type                                  Error message
+────────────────────────────────────────────  ────────────────────────────────────
+Free-tier pause resume (7 days inactive)       P1001 / ECONNREFUSED / non-101 status
+pgBouncer connection recycled mid-request      Connection terminated unexpectedly
+Pool exhausted under burst                     Timed out fetching a new connection
+```
+
+### `withRetry`
+
+```typescript
 export async function withRetry<T>(
   fn: () => Promise<T>,
   retries = 4,
@@ -360,217 +1557,302 @@ export async function withRetry<T>(
     try {
       return await fn();
     } catch (err) {
-      const isTransientConnectionError =
+      const isTransient =
         err instanceof Error &&
         (err.message.includes("P1001") ||
           err.message.includes("Can't reach database") ||
           err.message.includes("Connection terminated") ||
           err.message.includes("ECONNREFUSED") ||
-          err.message.includes("Timed out fetching a new connection") ||
+          err.message.includes("Timed out fetching") ||
           err.message.includes("network error"));
 
-      if (!isTransientConnectionError || attempt === retries) throw err;
-
-      // Linear backoff: 1.5s, 3s, 4.5s, 6s
-      await new Promise(r => setTimeout(r, delayMs * attempt));
+      if (!isTransient || attempt === retries) throw err;
+      await sleep(delayMs * attempt); // linear: 1.5s, 3s, 4.5s, 6s
     }
   }
   throw new Error("unreachable");
 }
 ```
 
-**Design decisions:**
+**Linear, not exponential, backoff:** the bottleneck is Supabase's fixed resume time (~1–4s), not server load. Exponential backoff would add unnecessary latency once the instance is warm.
 
-- **4 retries × 1.5s base = max 15s wait.** A free-tier project resume
-  typically completes well inside this window; pooler churn under load
-  resolves in one or two retries almost always. The 4th retry is insurance
-  for the resume-from-pause case specifically.
-- **Linear (not exponential) backoff** — the bottleneck for a project resume
-  is a fixed wake time, not server load that benefits from exponential
-  spacing. Exponential backoff would add unnecessary latency once the project
-  is already warm.
-- **Error message matching, not error type.** Prisma's pooled-connection
-  errors surface with different shapes depending on whether the failure is at
-  the pgBouncer layer or the underlying Postgres connection. String matching
-  on `err.message` is more robust than `instanceof` checks across these cases.
-- **Non-connection errors propagate immediately.** Constraint violations,
-  unique key errors, and query errors are thrown on the first attempt.
-  `withRetry` never masks application bugs — it only retries the specific
-  transient-connection error strings listed above.
-- **`DIRECT_URL` for seed/migrations.** Prisma CLI and `prisma/seed.ts` use
-  `DIRECT_URL` (the unpooled, port-5432 connection) rather than the pooled
-  `DATABASE_URL`. pgBouncer in transaction-pooling mode does not reliably
-  support the long-lived, multi-statement session behavior that `prisma
-  migrate` and large batched seed inserts require — the 540-product raw
-  INSERT batch in the seed script is run against the direct connection for
-  this reason.
+**`withRetry` is NOT used on `$transaction` calls with `SELECT FOR UPDATE`.** Retrying a transaction transparently would silently re-acquire a lock on a potentially different row state. Transactional mutations must handle their own retry at the service level where the business intent is known.
 
-**Usage pattern:**
+---
+
+## 20. Security — Complete Threat Model
+
+### XSS Prevention
+
+**HttpOnly cookies** — access token inaccessible to JavaScript, even if an attacker injects a script.
+
+**`safeString` Zod transform** — all string inputs sanitised at the validation layer:
+```typescript
+const safeString = z.string().transform(v => sanitizeHtml(v, { allowedTags: [] }));
+```
+User-controlled strings (product names, store descriptions, review comments) pass through `safeString`. Stored XSS requires both injection and rendering — `safeString` eliminates injection.
+
+### CSRF Prevention
+
+Double-submit cookie pattern. Non-HttpOnly `kridha_csrf` cookie set on login; `X-CSRF-Token` header required on all mutations. Cross-origin forged requests cannot read the cookie.
+
+### Timing Attack Prevention
+
+**Argon2 DUMMY_HASH:** On login with an unknown phone number, Argon2 verification still runs against a pre-computed dummy hash. Without this, the response time difference between "user not found" (fast, no hash) and "wrong PIN" (slow, hash comparison) leaks user existence. See `DUMMY_HASH` in `src/lib/auth.ts`.
+
+**`timingSafeEqual` for webhook HMAC:** Prevents signature byte recovery via response time measurement.
+
+### JWT Security
 
 ```typescript
-// Any DB call that can tolerate retry
-const product = await withRetry(() =>
-  productRepo.findNearby(input, excludeSellerId)
-);
+jwt.verify(token, JWT_SECRET, {
+  algorithms: ["HS256"],  // ← algorithm whitelist — prevents none-algorithm attack
+});
 ```
 
-Not every call uses `withRetry` — mutations inside `prisma.$transaction()`
-with `SELECT FOR UPDATE` should not be retried transparently, as the lock
-release and re-acquisition must be explicit.
+The `none` algorithm attack: a JWT with `alg: "none"` in the header can be crafted without a signature. Without an explicit algorithm whitelist, some implementations accept it. The whitelist rejects any JWT where `alg` is not `HS256`.
+
+### PIN Security
+
+```typescript
+await argon2.hash(pin, {
+  type: argon2.argon2id,
+  memoryCost: 65536,  // 64MB
+  timeCost: 3,
+  parallelism: 4,
+});
+```
+
+Argon2id is memory-hard — GPU-based brute force attacks are expensive because they require large amounts of GPU memory per attempt, limiting parallelism. `memoryCost: 65536` (64MB) is the OWASP 2024 minimum recommendation for Argon2id.
+
+### Progressive PIN Lockout
+
+```
+5 failures  → 10 minute lockout
+10 failures → 1 hour lockout
+20+ failures → 24 hour lockout
+```
+
+Stored on `User.pinFailedAttempts` and `User.pinLockedUntil`. Enforced at service layer before Argon2 verification is attempted — no hash computation wasted on locked accounts.
+
+### Silent Signup (Enumeration Prevention)
+
+```typescript
+// On registration with an already-registered phone
+return res.status(201).json({ success: true }); // identical to successful registration
+// Never return "phone already registered"
+```
+
+An attacker cannot determine whether a phone number is registered by testing the signup endpoint.
+
+### Bank Detail Encryption
+
+```typescript
+// AES-256-GCM for seller bank details at rest
+const encrypted = encrypt(accountNumber, process.env.ENCRYPTION_KEY!);
+await prisma.sellerProfile.update({ data: { accountNumber: encrypted } });
+
+// On read: truncate for non-admin, decrypt for admin/payout processing
+const masked = `****${decrypted.slice(-4)}`; // non-admin view
+```
+
+### CSP Headers
+
+```
+Content-Security-Policy: frame-ancestors 'none'; object-src 'none'; base-uri 'self'; form-action 'self'
+```
+
+`frame-ancestors 'none'` prevents clickjacking. `object-src 'none'` disables Flash/plugin injection. `base-uri 'self'` prevents base tag injection attacks.
 
 ---
 
-## 5. Cookie-Only Auth Architecture
+## 21. Performance — Query Optimisation & Connection Pooling
 
-**No `Authorization` header. No `localStorage`. No JWT in response body.**
+### Connection Pool Configuration
 
 ```
-kridha_access     │ HttpOnly │ path=/          │ 15 min  │ JWT — route handlers verify directly
-kridha_refresh    │ HttpOnly │ path=/api/auth  │ 7 days  │ Rotation chain — hash stored in DB
-kridha_lang       │          │ path=/          │ 1 year  │ "hi"|"en" — next-intl reads from JS
-kridha_access_exp │          │ path=/          │ 15 min  │ Unix expiry — proactive refresh scheduler
+DATABASE_URL → pgBouncer (port 6543, transaction mode)
+  └── Supabase free tier: max 60 backend connections
+  └── Application: effectively unlimited concurrent requests
+      (pgBouncer multiplexes)
+
+DIRECT_URL → Postgres direct (port 5432)
+  └── Used by: prisma migrate, seed, withRetry long-running ops
+  └── pgBouncer in transaction mode doesn't support multi-statement sessions
 ```
 
-`kridha_refresh` is path-scoped to `/api/auth`. The browser never sends it to
-`/api/products`, `/api/orders`, or any other endpoint — a stolen refresh token
-cannot be replayed against non-auth endpoints.
+**pg_trgm full-text vs PostGIS:** product name text search (`ILIKE '%query%'`) uses `pg_trgm` GIN index. PostGIS handles radius. Both run in a single query — no N+1 between text matching and spatial filtering.
 
-**Token Family Rotation:** Every `POST /api/auth/refresh` issues a new pair and
-revokes the old token hash in `RefreshToken`. Reusing a rotated token revokes
-all sessions for that user — theft detection with zero false positives.
+### Pagination
 
-**Silent Refresh (Axios Interceptor):**
-
-On `401`, the `api.ts` interceptor fires `POST /api/auth/refresh` using a
-dedicated `refreshClient` — a clean Axios instance with **no interceptor**. If
-the refresh itself returns `401`, the clean client rejects without re-entering
-the interceptor, preventing recursive 401 loops. All in-flight requests are
-queued during refresh and replayed on success.
-
-### 5a. Rate Limiter Failure Mode — Fail Closed
-
-Rate-limit counters live in Redis, separately from the cache-aside layer in
-§1.4. The two have deliberately different failure modes:
-
-- **Cache (§1.4):** fail-open. A Redis outage means more DB reads, not
-  incorrect behavior.
-- **Rate limiter:** fail-**closed**. If Redis is unreachable when a rate-limit
-  check is attempted, the request is **blocked**, not allowed through.
-
-This was not the original behavior. Load testing against a stopped Redis
-instance mid-run exposed the original implementation failing open — Redis
-unavailable meant the limiter could not read a counter, defaulted to "no limit
-found," and allowed unlimited traffic through during exactly the window an
-attacker would want it. Corrected to fail closed: if the rate-limit state
-cannot be read, the request is rejected, not waved through. The tradeoff is a
-Redis outage now degrades auth/write availability instead of degrading only
-read performance — judged the correct tradeoff for an endpoint class where the
-alternative is unbounded abuse during an infrastructure failure (INV-06 in
-`README.md` System Invariants).
-
----
-
-## 6. Key Technical Decisions
-
-### pickupDeadline Stored, Not Computed
-
-`SubOrder.pickupDeadline = pickupDate + window.endTime` is stored as a
-`DateTime` column at order creation. The Vercel Cron job that expires no-show
-orders runs:
-
+All list endpoints use cursor-based or offset pagination with explicit `LIMIT`:
 ```sql
-WHERE "pickupDeadline" < NOW() AND status = 'PENDING'
+LIMIT ${limit} OFFSET ${(page - 1) * limit}
 ```
 
-A computed expression cannot be indexed. A stored column can have a B-Tree
-index — the cron query is O(log n) at any order volume.
+`productRepo.findNearby` never returns unbounded result sets. Default limit: 20. Maximum: 50. Without explicit limits, a query for all products in a 50km radius could return thousands of rows on a mature catalog.
+
+### Slow Query Identification
+
+Supabase Dashboard → Query Performance → Slow Queries shows queries by mean execution time. The PostGIS query was profiled here — GIST index confirmed active by `EXPLAIN ANALYZE` showing `Index Scan using Product_location_gist`.
+
+### N+1 Prevention
+
+Prisma `include` for all multi-table reads:
+```typescript
+await prisma.order.findMany({
+  where: { buyerId },
+  include: {
+    subOrders: {
+      include: {
+        seller: { include: { pickupWindows: true } },
+        orderItems: { include: { product: true } },
+      },
+    },
+  },
+});
+```
+
+No lazy loading — all relations required for a response are fetched in one query.
+
+---
+
+## 22. Testing — Strategy & Validation
+
+### Testing Pyramid
+
+```
+           ┌───────────┐
+           │   k6      │  Load / concurrency / idempotency
+           │  (5 files)│
+           └─────┬─────┘
+                 │
+         ┌───────┴────────┐
+         │  Integration   │  (planned — supertest + real DB)
+         └───────┬────────┘
+                 │
+       ┌─────────┴──────────┐
+       │    Unit (planned)  │  Service layer — mocked repos
+       └────────────────────┘
+```
+
+### k6 Load Tests
+
+```
+01_percentiles.js    — P50/P90/P95/P99 per endpoint, 100 VUs steady state
+02_throughput.js     — req/s and error rate, ramp 10→500 VUs
+03_race_condition.js — stock locking proof, 50 isolated buyers on stock=10
+04_webhook_idempotency.js — 100 concurrent identical webhook deliveries
+05_concurrency.js    — cart stability (50 VUs) + cache cold vs warm comparison
+```
+
+### Race Condition Test Methodology
+
+Test 03 uses 50 isolated buyer accounts (each with their own JWT from `setup-race-test.ts`). Each VU calls `POST /api/orders` directly — bypassing the cart layer so the test exercises `SELECT FOR UPDATE` specifically, not cart-layer advisory checks.
+
+```
+Expected result: exactly 10 successes (201), exactly 40 conflicts (409), 0 server errors
+DB verification: SELECT available FROM "Product" WHERE id = $id → must return 0
+```
+
+### Webhook Idempotency Test
+
+100 VUs send the identical webhook payload (same `razorpayPaymentId`) concurrently. All receive 200. DB verification: `SELECT COUNT(*) FROM "WebhookLog" WHERE "razorpayPaymentId" = $id → 1`.
+
+### What Load Tests Found (Production Findings)
+
+1. **Dev server collapse under concurrency** — `next dev` is single-threaded; collapsed at 50 VUs. Tests redirected to production build.
+2. **Cart-clearing gap** — stock reached zero mid-checkout; cart UI did not clear after 409. The lock held; the bug was in client state. Fixed.
+3. **Rate limiter fail-open** — Redis stopped mid-test; rate limiter passed all requests. Fixed to fail-closed.
+4. **False positive** — quantity-5 items rejected by `minOrderValue` check. Not a bug; documented as platform business rule correctly enforcing ₹1000 minimum.
+
+### Known Testing Gaps
+
+- No unit tests on service layer — `orderService.createFromCart` has zero unit tests; compensating transaction path untested in isolation
+- Race condition test requires isolated buyer accounts — test setup script (`setup-race-test.ts`) must run before test 03
+- No CI integration — k6 tests run manually; a regression in locking or idempotency would not be caught automatically
+
+---
+
+## 23. Key Technical Decisions
+
+### `pickupDeadline` Stored, Not Computed
+
+`SubOrder.pickupDeadline = pickupDate + window.endTime` is stored as a `DateTime` column at order creation. The Vercel Cron job queries `WHERE "pickupDeadline" < NOW() AND status = 'PENDING'` — indexed, O(log n).
 
 ### Hindi-First i18n — Resolution at Creation
 
-Notification content is resolved at the time the notification is created,
-using `user.preferredLang` from the DB:
+Notification content resolved at creation time using `user.preferredLang`. The `Notification` table stores the final rendered string. Correct even if the user changes `preferredLang` after the fact — historical notifications reflect the language preference at the time of the event.
 
-```typescript
-const copy = notifStrings.orderConfirmed[user.preferredLang](shortId, otp);
-await prisma.notification.create({ data: { title: copy.title, body: copy.body, ... } });
-```
+### Separate Deal Entity
 
-No runtime translation. No message template stored and resolved later.
-The `Notification` table stores the final rendered string. This means
-notifications are correct even if the user changes `preferredLang` after the
-fact — the historical notification reflects the language preference at the time
-of the event.
+`Deal` is a first-class model:
+1. **History** — expired deals retained for seller analytics
+2. **One ACTIVE per product** — enforced at service layer
+3. **Cron-safe expiry** — `Deal.expiresAt` is indexed; cron runs `UPDATE "Deal" SET status = 'EXPIRED' WHERE expiresAt < NOW()`
 
-### Separate Deal Entity (Not a Product Field)
+### Minimum Order Value
 
-`Deal` is a first-class model, not a `discountPercent` column on `Product`.
-Reasons:
+`PlatformConfig.minOrderValue` (₹1000) enforced server-side at checkout. A request bypassing the UI must still be rejected by the service layer. Identified during load testing as the cause of an apparent "anomalous rejection pattern" — was correctly enforcing business logic.
 
-1. **History.** Expired deals are retained. `GET /api/products/deals/mine?status=expired`
-   gives sellers analytics on which deals drove orders.
-2. **One ACTIVE per product** — enforced at service layer (`DEAL_EXISTS` error),
-   not at DB level (no partial unique index on `status = ACTIVE`). The service
-   check is simpler and sufficient.
-3. **Cron-safe expiry.** `Deal.expiresAt` is a stored column. Cron runs
-   `UPDATE "Deal" SET status = 'EXPIRED' WHERE expiresAt < NOW() AND status = 'ACTIVE'`.
-   The product query joins only `ACTIVE AND expiresAt > NOW()` — double-guarded.
+### `DIRECT_URL` for Seed/Migrations
 
-### Minimum Order Value as Platform-Level Business Logic
-
-`PlatformConfig.minOrderValue` (₹1000) is enforced server-side at checkout,
-not just surfaced as a UI hint. This is deliberate: client-side minimums are
-advisory, not authoritative, and a request that bypasses the UI must still be
-rejected by the service layer. Worth noting explicitly because a load-test
-scenario using quantity-5 line items initially looked like an anomalous
-rejection pattern — it was traced to this exact rule firing correctly, not a
-defect. Distinguishing an intentional business-rule rejection from a bug
-during load-test triage is itself part of validating the system; see
-`README.md` → Performance Validation.
-
-### Order → SubOrder Decomposition
-
-**Atomic financial transaction vs. independent seller logistics.**
-
-An `Order` is the buyer's single Razorpay advance — one payment intent, one
-receipt, one atomic financial event. A `SubOrder` is a per-seller operational
-contract: independent OTP, pickup window, payment link, payout, and cancellation.
-
-Stock decrement inside `prisma.$transaction()` is grouped per seller —
-Seller A's lock does not block Seller B's concurrent checkout. Multi-seller
-cart checkout is parallelised at the seller granularity, serialised within
-each seller's product set.
+pgBouncer in transaction-pooling mode does not support long-lived multi-statement sessions. `prisma migrate` and the 540-product seed INSERT batch require session-scoped connections — they use `DIRECT_URL` (port 5432) to bypass pgBouncer.
 
 ---
 
-## 7. Scale Upgrade Path
+## 24. Scale Upgrade Path
 
-| Scale | Change |
-|-------|--------|
-| **Current** | Single Supabase Postgres instance (pooled + direct connection split). Vercel cron. Upstash rate limiting. |
-| **10x** | Supabase read replica for `productRepo.findNearby`. Redis cache TTL extended. `pg_trgm` GIN index already in place — no schema change. |
-| **100x** | BullMQ workers on Railway replace Vercel cron. Razorpay Route for automated bank transfers. PostGIS GIST index scales without modification. Supabase Pro tier for higher pooler connection limits. |
-| **500x** | Partition `Product` table by city (PostGIS `ST_DWithin` partitions cleanly on geography). Read replicas per region. |
+| Scale | Bottleneck | Change |
+|-------|------------|--------|
+| **Current** | — | Single Supabase Postgres + pgBouncer. Vercel Serverless. Upstash Redis. |
+| **5x traffic** | Product feed DB load | Supabase read replica for `productRepo.findNearby`. Redis cache TTL extended. `pg_trgm` GIN already in place. |
+| **10x traffic** | pgBouncer connection limits | Supabase Pro (higher pool limits). `withCache` stampede prevention (Redis SET NX lock). |
+| **50x traffic** | Synchronous notification/payout in request path | BullMQ workers on Railway. Lazy expiry moves to queue. Vercel Hobby cron replaced. |
+| **100x traffic** | Single Postgres write throughput | Partition `Product` table by city. Read replicas per region. Razorpay Route for automated payouts. |
+| **1M+ products** | PostGIS GIST performance | Partition spatially by bounding box. Each partition has its own GIST index. Queries routed by city. |
 
-PostGIS GIST spatial index is already in place — no spatial architecture change
-needed for 10x growth. The bottleneck at 10x is DB compute and pooler
-connection limits (read replica, Supabase tier upgrade), not the query design.
+**PostGIS GIST scales to 10x without schema change.** The bottleneck at 10x is DB compute (read replica), not the spatial index design.
 
 ---
 
-## 8. Known Limitations
+## 25. System Invariants
+
+19 correctness guarantees enforced at DB and application layer. Violating any is a bug, not a missing feature.
+
+| # | Invariant | Enforcement |
+|---|-----------|-------------|
+| INV-01 | `product.available` never goes negative | DB `CHECK (available >= 0)` + `SELECT FOR UPDATE` |
+| INV-02 | `COMPLETED`/`CANCELLED`/`DISPUTED` status cannot change | State machine empty edge arrays; `validateTransition` throws |
+| INV-03 | Webhook event processed exactly once | `WebhookLog.razorpayPaymentId @unique` + transaction |
+| INV-04 | BUYER cannot access seller-only routes | `requireRole(req, "SELLER")` in middleware |
+| INV-05 | User sees only their own orders | `userId` from JWT; all queries filter by `buyerId`/`sellerId` |
+| INV-06 | OTP cleared after verification | `deliveryOtp = null` in same transaction as status → COMPLETED |
+| INV-07 | Phone is the unique user identifier | `phone @unique` at DB level; silent signup prevents enumeration |
+| INV-08 | Seller store name + address must be unique | `@@unique([storeName, street])` at DB level |
+| INV-09 | Deal price reverts after expiry | Query joins only `status = ACTIVE AND expiresAt > NOW()` |
+| INV-10 | Order total ≥ platform minimum | `sellerTotal >= PlatformConfig.minOrderValue` before Razorpay creation |
+| INV-11 | Order cannot confirm without captured advance | Only `payment.captured` webhook triggers PENDING → CONFIRMED |
+| INV-12 | Order cannot complete without payment AND OTP | State machine requires READY_FOR_OTP_VERIFICATION before COMPLETED |
+| INV-13 | Refund calculated server-side only | `calcRefundAmount(advance, pickupDeadline, cancelledBy)` — client never sends refund amount |
+| INV-14 | Seller cannot see own products in buyer feed | `AND p."sellerId" != $userId` in PostGIS query when authenticated |
+| INV-15 | Review only after COMPLETED SubOrder | `reviewService` verifies `subOrder.status === COMPLETED` and buyer ownership |
+| INV-16 | One review per order per product | `@@unique([subOrderId, productId])` at DB level |
+| INV-17 | Bank details masked in non-admin responses | `accountNumber` truncated to last 4 digits |
+| INV-18 | Client never sends status transitions or prices | Zod schemas omit `status` and `unitPrice` from all request bodies |
+| INV-19 | Cart checkout reads from server state only | `POST /api/cart/checkout` takes no body — server reads CartSession from DB |
+
+---
+
+## 26. Known Limitations
 
 Stated explicitly rather than left for a reviewer to find:
 
-- **No chaos / multi-AZ failover testing yet.** The Supabase pooler retry
-  wrapper (§4) covers the transient-connection failure classes actually
-  observed under load. Broader failure injection (network partition,
-  multi-region failover) is untested.
-- **No automated load-test regression suite in CI.** The k6 scenarios that
-  surfaced the four issues in `README.md` → Performance Validation were run
-  manually, not wired into a CI gate. A regression in locking, idempotency, or
-  rate-limit fail-mode behavior would not be caught automatically today.
-- **Refresh-token table has no retention sweep.** Per §1.1/ADR-03 in
-  `README.md`, expired and rotated tokens are correctly rejected at point of
-  use but not deleted — rows accumulate until a cleanup pass is added. Not a
-  correctness issue at current volume; listed here as the operational
-  follow-up it actually is.
+- **No unit tests on service layer.** `orderService.createFromCart` has zero unit tests. The compensating transaction path (Razorpay failure after Postgres commit) has never been triggered in a controlled test environment.
+- **Race condition test requires pre-setup.** Test 03 requires 50 isolated buyer accounts created by `setup-race-test.ts`. Running without this setup produces misleading results.
+- **Cache stampede unmitigated.** Concurrent cache misses on the same product listing key all fire the PostGIS query simultaneously. A short-lived Redis lock in `withCache` is the known fix — not yet applied.
+- **Lazy expiry concurrent sweeps.** `releaseAllExpiredPendingOrders()` is called on every product feed request. Under high concurrent load, many simultaneous sweeps run. A Redis distributed lock (`SET NX EX 30`) at the top of the sweep function limits this to one sweep per 30 seconds — not yet applied.
+- **No chaos / multi-AZ failover testing.** The Supabase pooler retry wrapper covers the transient-connection failure classes observed under load. Network partition, multi-region failover are untested.
+- **No automated load-test regression in CI.** k6 tests run manually. A regression in locking, idempotency, or rate-limit fail-mode behavior would not be caught automatically.
+- **Refresh-token table has no retention sweep.** Expired and rotated sessions accumulate. Not a correctness issue at current volume; the security property holds at point-of-use regardless of table size.
+- **`withRetry` not applied to `$transaction` calls.** Transient Supabase connection failures during a `SELECT FOR UPDATE` transaction are not retried automatically — the lock must be re-acquired explicitly. Services must handle `P1001` errors at the caller level for transactional paths.

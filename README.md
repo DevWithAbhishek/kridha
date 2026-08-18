@@ -24,7 +24,7 @@ Available for backend & full-stack engineering roles.
 
 ## Executive Summary
 
-Self-pickup commerce breaks the assumptions most e-commerce backends are built on: a single cart can span multiple independent sellers, each with their own pickup point, fulfillment timeline, and settlement, and "nearby" has to mean a real geographic radius query, not a city-level filter. Built and run by one engineer with no dedicated ops team and no margin for silent data corruption — inventory races or payment/state mismatches aren't tolerable bugs to discover later, they're the thing the architecture has to rule out by construction. The result is a Next.js + PostgreSQL/PostGIS + Redis + Razorpay system where multi-vendor orders are decomposed into independently-tracked sub-orders, inventory writes are serialized at the database layer, and payment state is only ever trusted from a verified webhook — never from a client callback.
+A self-pickup commerce that breaks the assumptions most e-commerce backends are built on: a single cart can span multiple independent sellers, each with their own pickup point, fulfillment timeline, and settlement, and "nearby" has to mean a real geographic radius query, not a city-level filter. Built and run by one engineer with no dedicated ops team and no margin for silent data corruption — inventory races or payment/state mismatches aren't tolerable bugs to discover later, they're the thing the architecture has to rule out by construction. The result is a Next.js + PostgreSQL/PostGIS + Redis + Razorpay system where multi-vendor orders are decomposed into independently-tracked sub-orders, inventory writes are serialized at the database layer, and payment state is only ever trusted from a verified webhook — never from a client callback.
 
 ---
 
@@ -126,8 +126,13 @@ Load testing with k6 against checkout and catalog read paths, run against a prod
 
 | Document | Audience | Contents |
 |---|---|---|
-| [DESIGN.md](./docs/DESIGN.md) | CTO, Senior Engineer | Architecture, system invariants, full ADRs |
-| [API.md](./docs/API.md) | Engineers | API reference — 61 endpoints |
+| [ARCHITECTURE.md](./docs/ARCHITECTURE.md) | CTO, Principal/Staff Engineer | System-level reasoning — principles, full architecture, scaling triggers, tradeoffs |
+| [DECISIONS.md](./docs/DECISIONS.md) | Technical Interviewer, Senior Engineer | 10 ADRs — context, rejected alternatives, consequences, revisit triggers |
+| [DESIGN.md](./docs/DESIGN.md) | CTO, Staff Engineer | Full implementation reference — layers, concurrency, auth, DB design, known limitations |
+| [API.md](./docs/API.md) | Engineers | Complete API reference — 61 endpoints, auth, error codes |
+| [TESTING.md](./docs/TESTING.md) | Engineering Manager, Senior Engineer | Testing strategy, coverage, and honestly documented gaps |
+| [ERROR_HANDLING.md](./docs/ERROR_HANDLING.md) | Engineers | Real bugs hit during development — cause, fix, and the underlying lesson |
+| [LEARNINGS.md](./docs/LEARNINGS.md) | Engineers | Incident runbook — migration failures, infra decisions, security fixes |
 | [CASE_STUDY.md](./docs/CASE_STUDY.md) | Founder, EM | Engineering narrative & background |
 
 ---
@@ -198,7 +203,7 @@ Full set of 19 documented in [DESIGN.md](./docs/DESIGN.md):
 | 3 | A given webhook event ID is processed at most once, regardless of delivery retries |
 | 4 | An access token cannot authenticate once its parent refresh-token family has been marked compromised |
 | 5 | An Order's total must equal the sum of its SubOrder totals at every state transition |
-| 6 | Rate-limit state failing to load fails closed, never open |
+| 6 | Rate-limit state failing to load fails closed, never open. |
 
 ---
 

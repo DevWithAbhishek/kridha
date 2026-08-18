@@ -4,14 +4,24 @@
 
 ## Background: Why a Mechanical Engineer Builds Distributed Systems
 
-At Vedanta Aluminium, I was responsible for the Pneumatic Ash Handling System
-at the 1200 MW Jharsuguda captive power plant — a ₹95 Cr infrastructure that
-moved fly ash from ESP hoppers to storage silos across 2.4 km of pressurised
-pipelines. The system ran 24/7. A valve misfire at 4 AM meant ash overflow,
-environmental violation, and potential unit shutdown.
+At Vedanta Aluminum, I worked as a Capex Buyer on the Pneumatic Ash Handling
+System at the 1200 MW Jharsuguda captive power plant — a ₹95 Cr infrastructure
+project moving fly ash from ESP hoppers to storage silos across 2.4 km of
+pressurized pipelines. My role was capital equipment procurement and cost
+estimation, done in close coordination with the technical/engineering team
+over 7 months — reviewing vendor specifications, validating engineering
+assumptions against cost, and sitting in on design and reliability discussions
+for a system with zero tolerance for a certain class of failure. The system
+ran 24/7. A valve misfire at 4 AM meant ash overflow, environmental violation,
+and potential unit shutdown.
 
-That environment taught me three things that directly shaped how I architect
-software:
+I wasn't the engineer who designed the interlocks or wrote the sequencing
+logic. But being embedded with the technical team on cost estimation meant
+sitting through the reasoning behind them — why every one of 140+ solenoid
+valves needed a fallback, why sequences couldn't skip steps, why nothing was
+allowed to be optimistic about failure. That exposure shaped three things I
+now carry into how I architect software, even though the domain is completely
+different:
 
 **1. Edge-failure design is not optional.**
 A pneumatic conveying system has 140+ solenoid valves, each a failure point.
@@ -37,12 +47,13 @@ deterministically, at the DB layer, not by application retry logic.
 
 **3. Instrumentation is not overhead — it is the product.**
 A plant without SCADA telemetry is ungovernable. You cannot tune a conveying
-line you cannot observe. At Vedanta I built DCS tag hierarchies for 300+
-instruments. At Kridha I built structured Pino logging with `redact` for 14
-sensitive fields, `withLogger(handler, action)` wrapping every route, and
-GlitchTip error tracking with `tracesSampleRate: 0.1` in production. The log
-format matches what Vercel's log drain expects — structured JSON, not
-`console.log`.
+line you cannot observe. Reviewing the cost of a 300+ instrument DCS tag
+hierarchy at Vedanta made that concrete: instrumentation wasn't a line item to
+trim, it was what made an otherwise unmanageable system governable at all. At
+Kridha I built structured Pino logging with `redact` for 14 sensitive fields,
+`withLogger(handler, action)` wrapping every route, and GlitchTip error
+tracking with `tracesSampleRate: 0.1` in production. The log format matches
+what Vercel's log drain expects — structured JSON, not `console.log`.
 
 ---
 
@@ -145,7 +156,7 @@ explodes. Pessimistic locking serialises all 15 at the DB layer. The first N
 INSUFFICIENT_STOCK` immediately. First come, first served — no ambiguity, no
 retries, no partial failures.
 
-**3x query performance with Prisma 7 + GIST spatial index:**
+**3x query performance with PostGIS + GIST spatial index:**
 
 Product discovery switched from a Prisma ORM `findMany` with lat/lng arithmetic
 (table scan, O(n)) to a raw `$queryRaw` PostGIS query using `ST_DWithin` on
@@ -160,12 +171,6 @@ order without computing distance for non-results. `ORDER BY ST_Distance()`
 (the naive alternative) computes distance for every post-filter row. At 500
 products, that is 500 distance computations vs. O(log n) index traversals.
 
-Prisma 7's `@prisma/adapter-neon` (WebSocket-based serverless driver) further
-reduced cold-path connection overhead by ~40ms per request on Neon compared to
-the HTTP-based fallback — the adapter maintains a persistent WebSocket for the
-duration of a Vercel function invocation rather than establishing a new TCP
-connection per query.
-
 ---
 
 ## Technical Decisions — The 'Why'
@@ -175,7 +180,7 @@ connection per query.
 Elasticsearch would add a second infrastructure dependency (cost, ops overhead)
 for a problem PostgreSQL already solves. `pg_trgm` GIN index handles
 `ILIKE '%query%'` on `nameEn` and `nameHi` with trigram acceleration. PostGIS
-handles radius search. Both run on the same Neon instance. Zero additional
+handles radius search. Both run on the same Postgres instance. Zero additional
 cost. Zero additional failure domain.
 
 Elasticsearch makes sense at 10M+ products where full-text ranking, faceting,
@@ -246,52 +251,8 @@ transaction boundary is the seller, not the order.
 
 ---
 
-## Next: FixMitraa — Multi-Actor State Machine Design
-
-FixMitraa is a home services marketplace (plumbing, electrical, carpentry) —
-currently in **finalized LLD and system design phase**. Implementation is
-pending, but the architecture decisions are complete:
-
-**Multi-Actor State Machine:**
-Unlike Kridha's two-actor model (buyer + seller), FixMitraa has four actors:
-Customer, Technician, Supervisor, and Platform. Each actor has a different
-view of the same job state and different permitted transitions. A Technician
-can transition `ASSIGNED → IN_PROGRESS`. A Supervisor can transition
-`DISPUTED → RESOLVED`. A Customer can transition `COMPLETED → REVIEWED`.
-The state machine is parameterised by actor role — `validateTransition(from,
-to, actorRole)` — preventing cross-actor state pollution.
-
-**Key design decisions already finalised:**
-
-- **Job escrow model:** platform holds full payment in escrow at booking.
-  Technician is paid on Customer approval (OTP, same pattern as Kridha) or
-  auto-released after 24h dispute window.
-- **Technician geofencing:** job assignment only to technicians within 8 km,
-  ranked by `reliabilityScore DESC`. PostGIS `ST_DWithin` + `<->` KNN —
-  same spatial architecture as Kridha product discovery.
-- **Supervisor escalation path:** disputes unresolved by either party for 48h
-  auto-escalate to Supervisor. Supervisor resolution is the only path out of
-  `DISPUTED` — no self-service resolution.
-- **Multi-tier pricing:** base rate + parts cost + complexity tier. Parts cost
-  submitted by Technician, approved by Customer before job starts — prevents
-  bill shock (same two-phase commit pattern as Kridha's advance + remaining).
-
-The LLD phase produced: 14 Prisma models, 8 state machine actors, 23 defined
-transitions, 12 system invariants, and a PostGIS-based assignment algorithm.
-Implementation begins after Kridha's pilot phase.
+**Edge-failure design, deterministic workflows, and instrumentation-first
+thinking are not framework-specific skills. They are how I approach any system
+where correctness costs more to recover than to guarantee upfront.**
 
 ---
-
-## Why This Matters for a Backend Role
-
-The progression from Vedanta → Kridha → FixMitraa is not a pivot — it is the
-same engineering discipline applied at different abstraction levels:
-
-- Vedanta: interlocks and sequencing on physical systems with ₹95 Cr downside.
-- Kridha: state machines and atomic writes on financial systems with payment
-  integrity requirements.
-- FixMitraa: multi-actor coordination on trust-dependent service delivery.
-
-Edge-failure design, deterministic workflows, and instrumentation-first
-thinking are not framework-specific skills. They are how I approach any system
-where correctness costs more to recover than to guarantee upfront.

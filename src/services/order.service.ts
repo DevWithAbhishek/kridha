@@ -37,6 +37,13 @@ export const orderService = {
       include: { priceTiers: true },
     });
 
+    if (products.length !== productIds.length) {
+      // Some products were deleted — findMany silently omits them
+      // The map.get() will throw PRODUCT_NOT_FOUND, but this catches it earlier
+      // with a clearer error
+      throw ERR.PRODUCT_NOT_FOUND;
+    }
+
     const productMap = new Map(products.map((p) => [p.id, p]));
     const enriched: EnrichedItem[] = items.map((item) => {
       const product = productMap.get(item.productId);
@@ -47,12 +54,6 @@ export const orderService = {
       };
     });
 
-    if (products.length !== productIds.length) {
-      // Some products were deleted — findMany silently omits them
-      // The map.get() will throw PRODUCT_NOT_FOUND, but this catches it earlier
-      // with a clearer error
-      throw ERR.PRODUCT_NOT_FOUND;
-    }
     const bySeller = new Map<string, typeof enriched>();
     for (const item of enriched) {
       const arr = bySeller.get(item.product.sellerId) ?? [];
